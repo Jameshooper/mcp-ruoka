@@ -10,6 +10,7 @@ Unofficial MCP server for searching Finnish grocery and alcohol products across 
 
 - **search_products** — Search products by query. Supports all three chains. `storeId` required for K-Ruoka/S-Kaupat, optional for Alko (national catalog).
 - **get_stores** — List stores, optionally filtered by city and/or chain.
+- **find_recipe_ingredients** — Check a recipe's ingredients against one K-Ruoka/S-Kaupat store. The calling model supplies Finnish search terms for each English ingredient (best guess first, then synonyms); the tool tries them in order and returns the first matching products with prices. Typical flow: `get_stores` with the city → pick a store → `find_recipe_ingredients`. In-store aisle location and live shelf stock are not available from the chain APIs used here.
 
 ## Install as Claude Code plugin
 

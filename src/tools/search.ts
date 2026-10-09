@@ -4,6 +4,23 @@ import * as alko from "../browser/alko.ts";
 import * as kRuoka from "../browser/k-ruoka.ts";
 import * as sKaupat from "../browser/s-kaupat.ts";
 import { logger } from "../logger.ts";
+import type { Chain, SearchResult } from "../types.ts";
+
+export function runSearch(
+	chain: Chain,
+	query: string,
+	storeId: string | undefined,
+	limit: number,
+): Promise<SearchResult> {
+	switch (chain) {
+		case "k-ruoka":
+			return kRuoka.searchProducts(query, storeId ?? "", limit);
+		case "s-kaupat":
+			return sKaupat.searchProducts(query, storeId ?? "", limit);
+		case "alko":
+			return alko.searchProducts(query, storeId, limit);
+	}
+}
 
 export function registerSearchTool(server: McpServer): void {
 	server.registerTool(
@@ -44,12 +61,7 @@ export function registerSearchTool(server: McpServer): void {
 					};
 				}
 
-				const result =
-					chain === "k-ruoka"
-						? await kRuoka.searchProducts(query, storeId ?? "", limit)
-						: chain === "s-kaupat"
-							? await sKaupat.searchProducts(query, storeId ?? "", limit)
-							: await alko.searchProducts(query, storeId, limit);
+				const result = await runSearch(chain, query, storeId, limit);
 
 				return {
 					content: [

@@ -18,6 +18,7 @@ import { warmup as warmupAlko } from "./browser/alko.ts";
 import { warmup as warmupSKaupat } from "./browser/s-kaupat.ts";
 import { getPage } from "./browser/session.ts";
 import { logger } from "./logger.ts";
+import { registerRecipeTool } from "./tools/recipe.ts";
 import { registerSearchTool } from "./tools/search.ts";
 import { registerStoresTool } from "./tools/stores.ts";
 
@@ -32,6 +33,7 @@ function createServer(): McpServer {
 	});
 	registerSearchTool(server);
 	registerStoresTool(server);
+	registerRecipeTool(server);
 	return server;
 }
 
