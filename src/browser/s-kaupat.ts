@@ -444,6 +444,58 @@ export function parseProductPageLocation(html: string, ean: string): ProductPage
 	return { pageStoreId, location: null };
 }
 
+const BROWSER_LOCATION_TIMEOUT = 20_000;
+
+const ClientProductResponseSchema = z.object({
+	data: z.object({
+		product: z.object({
+			ean: z.string(),
+			storeId: z.string(),
+			location: PageProductSchema.shape.location,
+		}),
+	}),
+});
+
+// The selected store lives only in the site's localStorage ("store-storage"), so for any store
+// other than the site default the page must run in a browser for the app to request that
+// store's product data itself.
+async function getProductLocationViaBrowser(
+	productUrl: string,
+	ean: string,
+	storeId: string,
+): Promise<ProductLocation | null> {
+	const ctx = await getContext();
+	const page = await ctx.newPage();
+	try {
+		const seed = JSON.stringify({ state: { storeId }, version: 0 });
+		await page.addInitScript(`localStorage.setItem("store-storage", ${JSON.stringify(seed)})`);
+
+		const found = new Promise<ProductLocation | null>((resolve) => {
+			const timer = setTimeout(() => {
+				logger.warn({ ean, storeId }, "Timed out waiting for store-specific product data");
+				resolve(null);
+			}, BROWSER_LOCATION_TIMEOUT);
+
+			page.on("response", async (res) => {
+				if (!res.url().startsWith(API_URL)) return;
+				const body: unknown = await res.json().catch(() => null);
+				const parsed = ClientProductResponseSchema.safeParse(body);
+				// Matching on storeId keeps another store's shelf from being reported
+				if (parsed.success && parsed.data.data.product.ean === ean) {
+					if (parsed.data.data.product.storeId !== storeId) return;
+					clearTimeout(timer);
+					resolve(parsed.data.data.product.location);
+				}
+			});
+		});
+
+		await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+		return await found;
+	} finally {
+		await page.close();
+	}
+}
+
 export async function getProductLocation(
 	productUrl: string,
 	ean: string,
@@ -460,12 +512,7 @@ export async function getProductLocation(
 	if (!response.ok) throw new Error(`S-Kaupat product page HTTP ${response.status}`);
 
 	const { pageStoreId, location } = parseProductPageLocation(await response.text(), ean);
+	if (pageStoreId === storeId) return location;
 
-	// Without a way to select the store for this request the page renders the default store,
-	// and reporting that store's aisle for another store would send shoppers to the wrong shelf.
-	if (pageStoreId !== storeId) {
-		logger.warn({ ean, requested: storeId, rendered: pageStoreId }, "Product page store mismatch");
-		return null;
-	}
-	return location;
+	return getProductLocationViaBrowser(productUrl, ean, storeId);
 }
