@@ -1,5 +1,10 @@
 export type Chain = "k-ruoka" | "s-kaupat" | "alko";
 
+export interface ProductLocation {
+	aisle: string | null;
+	floor: number | null;
+}
+
 export interface Product {
 	name: string;
 	price: number | null;
@@ -9,6 +14,8 @@ export interface Product {
 	brand: string | null;
 	category: string | null;
 	abv?: number | null;
+	url?: string | null;
+	location?: ProductLocation | null;
 }
 
 export interface Store {

@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
+import { getProductLocation } from "../browser/s-kaupat.ts";
 import { logger } from "../logger.ts";
 import type { Product } from "../types.ts";
 import { runSearch } from "./search.ts";
@@ -24,11 +25,26 @@ interface IngredientResult {
 	error?: string;
 }
 
+async function attachLocations(products: Product[], storeId: string): Promise<Product[]> {
+	return Promise.all(
+		products.map(async (product) => {
+			if (!product.url) return product;
+			try {
+				return { ...product, location: await getProductLocation(product.url, product.id, storeId) };
+			} catch (error) {
+				logger.warn({ err: error, ean: product.id }, "Shelf location lookup failed");
+				return product;
+			}
+		}),
+	);
+}
+
 async function resolveIngredient(
 	ingredient: z.infer<typeof IngredientSchema>,
 	chain: "k-ruoka" | "s-kaupat",
 	storeId: string,
 	limit: number,
+	includeLocation: boolean,
 ): Promise<IngredientResult> {
 	const triedTerms: string[] = [];
 	try {
@@ -43,7 +59,10 @@ async function resolveIngredient(
 					status: "found",
 					matchedTerm: term,
 					triedTerms,
-					products: result.products,
+					products:
+						includeLocation && chain === "s-kaupat"
+							? await attachLocations(result.products, storeId)
+							: result.products,
 				};
 			}
 		}
@@ -72,11 +91,18 @@ export function registerRecipeTool(server: McpServer): void {
 		"find_recipe_ingredients",
 		{
 			description:
-				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock and in-store aisle location are not exposed by the chain APIs this server uses.",
+				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock is not exposed. With includeLocation (S-Kaupat only) each candidate also gets its in-store aisle and floor when the store is known to the site.",
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]).describe("Which chain's store to check"),
 				storeId: z.string().min(1).describe("Store ID from get_stores"),
 				ingredients: z.array(IngredientSchema).min(1).max(40),
+				includeLocation: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						"S-Kaupat only: also look up each candidate's aisle ('Hyllyväli') and floor in the store. Adds one page fetch per candidate.",
+					),
 				limitPerIngredient: z
 					.number()
 					.int()
@@ -87,11 +113,13 @@ export function registerRecipeTool(server: McpServer): void {
 					.describe("Candidate products per ingredient (default: 3)"),
 			}),
 		},
-		async ({ chain, storeId, ingredients, limitPerIngredient }) => {
+		async ({ chain, storeId, ingredients, limitPerIngredient, includeLocation }) => {
 			// Sequential: K-Ruoka shares a single browser page, and recipes are short.
 			const results: IngredientResult[] = [];
 			for (const ingredient of ingredients) {
-				results.push(await resolveIngredient(ingredient, chain, storeId, limitPerIngredient));
+				results.push(
+					await resolveIngredient(ingredient, chain, storeId, limitPerIngredient, includeLocation),
+				);
 			}
 
 			const summary = {

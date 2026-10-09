@@ -1,6 +1,6 @@
 import * as z from "zod/v4";
 import { logger } from "../logger.ts";
-import type { Product, SearchResult, Store } from "../types.ts";
+import type { Product, ProductLocation, SearchResult, Store } from "../types.ts";
 import { getContext } from "./session.ts";
 
 const ORIGIN = "https://www.s-kaupat.fi";
@@ -135,6 +135,7 @@ const PricingSchema = z.object({
 const SKaupatProductSchema = z.object({
 	name: z.string(),
 	ean: z.string(),
+	slug: z.string().nullish(),
 	price: z.number().nullable(),
 	brandName: z.string().nullable(),
 	pricing: PricingSchema,
@@ -192,6 +193,7 @@ function mapProduct(item: z.infer<typeof ProductListItemSchema>): Product {
 			: null,
 		brand: p.brandName,
 		category: p.hierarchyPath[0]?.name ?? null,
+		url: p.slug ? `${ORIGIN}/tuote/${p.slug}/${p.ean}` : null,
 	};
 }
 
@@ -392,4 +394,78 @@ export async function getStores(city?: string): Promise<Store[]> {
 	}
 
 	return allStoresCache;
+}
+
+const NEXT_DATA_RE = /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/;
+
+const NextDataSchema = z.object({
+	props: z.object({
+		pageProps: z.object({
+			apolloState: z.record(z.string(), z.unknown()),
+		}),
+	}),
+});
+
+const RootQuerySchema = z.object({ currentStoreId: z.string().nullish() });
+
+const PageProductSchema = z.object({
+	ean: z.string(),
+	storeId: z.string(),
+	location: z
+		.object({
+			aisle: z.string().nullable(),
+			floor: z.number().nullable(),
+		})
+		.nullable(),
+});
+
+export interface ProductPageLocation {
+	pageStoreId: string | null;
+	location: ProductLocation | null;
+}
+
+// The product page is server-rendered with the store's data embedded as Apollo cache JSON,
+// so shelf location is readable without a persisted-query hash.
+export function parseProductPageLocation(html: string, ean: string): ProductPageLocation {
+	const match = NEXT_DATA_RE.exec(html);
+	if (!match?.[1]) throw new Error("S-Kaupat product page has no __NEXT_DATA__");
+
+	const { apolloState } = NextDataSchema.parse(JSON.parse(match[1])).props.pageProps;
+	const pageStoreId =
+		RootQuerySchema.safeParse(apolloState.ROOT_QUERY).data?.currentStoreId ?? null;
+
+	for (const [key, value] of Object.entries(apolloState)) {
+		if (!key.startsWith("Product:")) continue;
+		const product = PageProductSchema.safeParse(value);
+		if (product.success && product.data.ean === ean) {
+			return { pageStoreId: product.data.storeId, location: product.data.location };
+		}
+	}
+	return { pageStoreId, location: null };
+}
+
+export async function getProductLocation(
+	productUrl: string,
+	ean: string,
+	storeId: string,
+): Promise<ProductLocation | null> {
+	const response = await fetch(productUrl, {
+		headers: {
+			"User-Agent":
+				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+			Accept: "text/html",
+		},
+		signal: AbortSignal.timeout(API_TIMEOUT),
+	});
+	if (!response.ok) throw new Error(`S-Kaupat product page HTTP ${response.status}`);
+
+	const { pageStoreId, location } = parseProductPageLocation(await response.text(), ean);
+
+	// Without a way to select the store for this request the page renders the default store,
+	// and reporting that store's aisle for another store would send shoppers to the wrong shelf.
+	if (pageStoreId !== storeId) {
+		logger.warn({ ean, requested: storeId, rendered: pageStoreId }, "Product page store mismatch");
+		return null;
+	}
+	return location;
 }
