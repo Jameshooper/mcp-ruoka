@@ -10,6 +10,8 @@ export interface AllergenFlag {
 	source: "declared allergens" | "ingredients";
 	text: string;
 	level: string | null;
+	// "may_contain": a precautionary trace statement, not an ingredient
+	kind: "contains" | "may_contain";
 }
 
 export interface AllergenCheck {

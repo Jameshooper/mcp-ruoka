@@ -11,7 +11,20 @@ export interface AllergenDetails {
 
 // Declared allergens and ingredient lists change with recipe updates, but not within a day
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const SNIPPET_RADIUS = 30;
+const MAX_SNIPPET = 200;
+// Finnish and English precautionary phrasing found in ingredient texts
+const MAY_CONTAIN_RE =
+	/(voi|voivat|saattaa|saattavat) sisältää|pieniä määriä|jälkiä|may contain|traces/i;
+
+// The sentence holding the match, so a "may contain ..." lead-in is not cut off
+function sentenceAround(text: string, at: number, length: number): string {
+	const before = text.lastIndexOf(". ", at);
+	const start = before === -1 ? 0 : before + 2;
+	const after = text.indexOf(". ", at + length);
+	const end = after === -1 ? text.length : after + 1;
+	const sentence = text.slice(start, end).trim();
+	return sentence.length > MAX_SNIPPET ? `${sentence.slice(0, MAX_SNIPPET)}…` : sentence;
+}
 
 const ProductResponseSchema = z.object({
 	data: z.object({
@@ -88,6 +101,7 @@ export function matchAvoidTerms(details: AllergenDetails, terms: readonly string
 					source: "declared allergens",
 					text: allergen.text,
 					level: allergen.level,
+					kind: allergen.level === "MAY_CONTAIN" ? "may_contain" : "contains",
 				});
 			}
 		}
@@ -95,10 +109,14 @@ export function matchAvoidTerms(details: AllergenDetails, terms: readonly string
 		const ingredients = details.ingredients;
 		const at = ingredients?.toLowerCase().indexOf(term) ?? -1;
 		if (ingredients && at >= 0) {
-			const snippet = ingredients
-				.slice(Math.max(0, at - SNIPPET_RADIUS), at + term.length + SNIPPET_RADIUS)
-				.trim();
-			flags.push({ term, source: "ingredients", text: snippet, level: null });
+			const sentence = sentenceAround(ingredients, at, term.length);
+			flags.push({
+				term,
+				source: "ingredients",
+				text: sentence,
+				level: null,
+				kind: MAY_CONTAIN_RE.test(sentence) ? "may_contain" : "contains",
+			});
 		}
 	}
 
