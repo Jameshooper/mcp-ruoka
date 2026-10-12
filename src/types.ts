@@ -5,6 +5,8 @@ export interface ProductLocation {
 	floor: number | null;
 }
 
+export type LocationStatus = "found" | "none" | "unknown" | "pending";
+
 export interface Product {
 	name: string;
 	price: number | null;
@@ -16,6 +18,7 @@ export interface Product {
 	abv?: number | null;
 	url?: string | null;
 	location?: ProductLocation | null;
+	locationStatus?: LocationStatus;
 }
 
 export interface Store {

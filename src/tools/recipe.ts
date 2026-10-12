@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { getProductLocation } from "../browser/s-kaupat.ts";
+import { getProductLocation } from "../browser/s-kaupat-location.ts";
 import { logger } from "../logger.ts";
 import type { Product } from "../types.ts";
 import { runSearch } from "./search.ts";
@@ -25,18 +25,75 @@ interface IngredientResult {
 	error?: string;
 }
 
-async function attachLocations(products: Product[], storeId: string): Promise<Product[]> {
-	return Promise.all(
-		products.map(async (product) => {
-			if (!product.url) return product;
-			try {
-				return { ...product, location: await getProductLocation(product.url, product.id, storeId) };
-			} catch (error) {
-				logger.warn({ err: error, ean: product.id }, "Shelf location lookup failed");
-				return product;
-			}
-		}),
-	);
+// Stays under the ~60s limit MCP clients commonly apply to a tool call
+const CALL_BUDGET_MS = 50_000;
+
+async function mapPool<T, R>(
+	items: readonly T[],
+	concurrency: number,
+	fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let next = 0;
+	const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+		while (next < items.length) {
+			const index = next++;
+			const item = items[index];
+			if (item !== undefined) results[index] = await fn(item);
+		}
+	});
+	await Promise.all(workers);
+	return results;
+}
+
+interface LocationTally {
+	found: number;
+	none: number;
+	unknown: number;
+	pending: number;
+}
+
+async function attachLocations(
+	results: IngredientResult[],
+	storeId: string,
+	topN: number,
+	deadline: number,
+): Promise<LocationTally> {
+	const lookups: Promise<void>[] = [];
+	const targets: Product[] = [];
+
+	for (const result of results) {
+		for (const product of result.products.slice(0, topN)) {
+			if (!product.url) continue;
+			targets.push(product);
+			// Lookups that miss the deadline keep running and fill the cache for the next call
+			lookups.push(
+				getProductLocation(product.url, product.id, storeId).then(
+					(r) => {
+						product.location = r.location;
+						product.locationStatus = r.status;
+					},
+					(error) => {
+						logger.warn({ err: error, ean: product.id }, "Shelf location lookup failed");
+						product.locationStatus = "unknown";
+					},
+				),
+			);
+		}
+	}
+
+	const remaining = Math.max(deadline - Date.now(), 1_000);
+	await Promise.race([
+		Promise.all(lookups),
+		new Promise<void>((resolve) => setTimeout(resolve, remaining)),
+	]);
+
+	const tally: LocationTally = { found: 0, none: 0, unknown: 0, pending: 0 };
+	for (const product of targets) {
+		product.locationStatus ??= "pending";
+		tally[product.locationStatus]++;
+	}
+	return tally;
 }
 
 async function resolveIngredient(
@@ -44,7 +101,6 @@ async function resolveIngredient(
 	chain: "k-ruoka" | "s-kaupat",
 	storeId: string,
 	limit: number,
-	includeLocation: boolean,
 ): Promise<IngredientResult> {
 	const triedTerms: string[] = [];
 	try {
@@ -59,10 +115,7 @@ async function resolveIngredient(
 					status: "found",
 					matchedTerm: term,
 					triedTerms,
-					products:
-						includeLocation && chain === "s-kaupat"
-							? await attachLocations(result.products, storeId)
-							: result.products,
+					products: result.products,
 				};
 			}
 		}
@@ -91,7 +144,7 @@ export function registerRecipeTool(server: McpServer): void {
 		"find_recipe_ingredients",
 		{
 			description:
-				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock is not exposed. With includeLocation (S-Kaupat only) each candidate also gets its in-store aisle and floor when the store is known to the site.",
+				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock is not exposed. With includeLocation (S-Kaupat only) the top candidate(s) per ingredient also get their in-store aisle and floor. Each carries locationStatus: found, none (the store lists no aisle), unknown (lookup failed) or pending (still loading when the call's time budget ran out: repeat the same call shortly and it will be answered from cache).",
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]).describe("Which chain's store to check"),
 				storeId: z.string().min(1).describe("Store ID from get_stores"),
@@ -101,7 +154,17 @@ export function registerRecipeTool(server: McpServer): void {
 					.optional()
 					.default(false)
 					.describe(
-						"S-Kaupat only: also look up each candidate's aisle ('Hyllyväli') and floor in the store. Adds one page fetch per candidate.",
+						"S-Kaupat only: also look up the aisle ('Hyllyväli') and floor in the store for the top candidates of each ingredient.",
+					),
+				locationForTopN: z
+					.number()
+					.int()
+					.min(1)
+					.max(5)
+					.optional()
+					.default(1)
+					.describe(
+						"With includeLocation: how many of each ingredient's top candidates get a shelf lookup (default: 1).",
 					),
 				limitPerIngredient: z
 					.number()
@@ -113,14 +176,25 @@ export function registerRecipeTool(server: McpServer): void {
 					.describe("Candidate products per ingredient (default: 3)"),
 			}),
 		},
-		async ({ chain, storeId, ingredients, limitPerIngredient, includeLocation }) => {
-			// Sequential: K-Ruoka shares a single browser page, and recipes are short.
-			const results: IngredientResult[] = [];
-			for (const ingredient of ingredients) {
-				results.push(
-					await resolveIngredient(ingredient, chain, storeId, limitPerIngredient, includeLocation),
-				);
-			}
+		async ({
+			chain,
+			storeId,
+			ingredients,
+			limitPerIngredient,
+			includeLocation,
+			locationForTopN,
+		}) => {
+			const deadline = Date.now() + CALL_BUDGET_MS;
+
+			// K-Ruoka shares a single browser page, so only S-Kaupat searches run in parallel
+			const results = await mapPool(ingredients, chain === "s-kaupat" ? 4 : 1, (ingredient) =>
+				resolveIngredient(ingredient, chain, storeId, limitPerIngredient),
+			);
+
+			const locations =
+				includeLocation && chain === "s-kaupat"
+					? await attachLocations(results, storeId, locationForTopN, deadline)
+					: null;
 
 			const summary = {
 				chain,
@@ -128,6 +202,12 @@ export function registerRecipeTool(server: McpServer): void {
 				found: results.filter((r) => r.status === "found").length,
 				notFound: results.filter((r) => r.status === "not_found").map((r) => r.english),
 				errors: results.filter((r) => r.status === "error").map((r) => r.english),
+				...(locations && {
+					locations,
+					...(locations.pending > 0 && {
+						note: "Some shelf locations were still loading; repeat the same call in a minute and they will be returned from cache.",
+					}),
+				}),
 			};
 
 			return {

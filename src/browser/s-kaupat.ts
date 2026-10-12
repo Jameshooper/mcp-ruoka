@@ -1,11 +1,11 @@
 import * as z from "zod/v4";
 import { logger } from "../logger.ts";
-import type { Product, ProductLocation, SearchResult, Store } from "../types.ts";
+import type { Product, SearchResult, Store } from "../types.ts";
 import { getContext } from "./session.ts";
 
-const ORIGIN = "https://www.s-kaupat.fi";
-const API_URL = "https://api.s-kaupat.fi/";
-const API_TIMEOUT = 15_000;
+export const ORIGIN = "https://www.s-kaupat.fi";
+export const API_URL = "https://api.s-kaupat.fi/";
+export const API_TIMEOUT = 15_000;
 
 const ExtensionsParamSchema = z.object({
 	persistedQuery: z.object({
@@ -394,125 +394,4 @@ export async function getStores(city?: string): Promise<Store[]> {
 	}
 
 	return allStoresCache;
-}
-
-const NEXT_DATA_RE = /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/;
-
-const NextDataSchema = z.object({
-	props: z.object({
-		pageProps: z.object({
-			apolloState: z.record(z.string(), z.unknown()),
-		}),
-	}),
-});
-
-const RootQuerySchema = z.object({ currentStoreId: z.string().nullish() });
-
-const PageProductSchema = z.object({
-	ean: z.string(),
-	storeId: z.string(),
-	location: z
-		.object({
-			aisle: z.string().nullable(),
-			floor: z.number().nullable(),
-		})
-		.nullable(),
-});
-
-export interface ProductPageLocation {
-	pageStoreId: string | null;
-	location: ProductLocation | null;
-}
-
-// The product page is server-rendered with the store's data embedded as Apollo cache JSON,
-// so shelf location is readable without a persisted-query hash.
-export function parseProductPageLocation(html: string, ean: string): ProductPageLocation {
-	const match = NEXT_DATA_RE.exec(html);
-	if (!match?.[1]) throw new Error("S-Kaupat product page has no __NEXT_DATA__");
-
-	const { apolloState } = NextDataSchema.parse(JSON.parse(match[1])).props.pageProps;
-	const pageStoreId =
-		RootQuerySchema.safeParse(apolloState.ROOT_QUERY).data?.currentStoreId ?? null;
-
-	for (const [key, value] of Object.entries(apolloState)) {
-		if (!key.startsWith("Product:")) continue;
-		const product = PageProductSchema.safeParse(value);
-		if (product.success && product.data.ean === ean) {
-			return { pageStoreId: product.data.storeId, location: product.data.location };
-		}
-	}
-	return { pageStoreId, location: null };
-}
-
-const BROWSER_LOCATION_TIMEOUT = 20_000;
-
-const ClientProductResponseSchema = z.object({
-	data: z.object({
-		product: z.object({
-			ean: z.string(),
-			storeId: z.string(),
-			location: PageProductSchema.shape.location,
-		}),
-	}),
-});
-
-// The selected store lives only in the site's localStorage ("store-storage"), so for any store
-// other than the site default the page must run in a browser for the app to request that
-// store's product data itself.
-async function getProductLocationViaBrowser(
-	productUrl: string,
-	ean: string,
-	storeId: string,
-): Promise<ProductLocation | null> {
-	const ctx = await getContext();
-	const page = await ctx.newPage();
-	try {
-		const seed = JSON.stringify({ state: { storeId }, version: 0 });
-		await page.addInitScript(`localStorage.setItem("store-storage", ${JSON.stringify(seed)})`);
-
-		const found = new Promise<ProductLocation | null>((resolve) => {
-			const timer = setTimeout(() => {
-				logger.warn({ ean, storeId }, "Timed out waiting for store-specific product data");
-				resolve(null);
-			}, BROWSER_LOCATION_TIMEOUT);
-
-			page.on("response", async (res) => {
-				if (!res.url().startsWith(API_URL)) return;
-				const body: unknown = await res.json().catch(() => null);
-				const parsed = ClientProductResponseSchema.safeParse(body);
-				// Matching on storeId keeps another store's shelf from being reported
-				if (parsed.success && parsed.data.data.product.ean === ean) {
-					if (parsed.data.data.product.storeId !== storeId) return;
-					clearTimeout(timer);
-					resolve(parsed.data.data.product.location);
-				}
-			});
-		});
-
-		await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
-		return await found;
-	} finally {
-		await page.close();
-	}
-}
-
-export async function getProductLocation(
-	productUrl: string,
-	ean: string,
-	storeId: string,
-): Promise<ProductLocation | null> {
-	const response = await fetch(productUrl, {
-		headers: {
-			"User-Agent":
-				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-			Accept: "text/html",
-		},
-		signal: AbortSignal.timeout(API_TIMEOUT),
-	});
-	if (!response.ok) throw new Error(`S-Kaupat product page HTTP ${response.status}`);
-
-	const { pageStoreId, location } = parseProductPageLocation(await response.text(), ean);
-	if (pageStoreId === storeId) return location;
-
-	return getProductLocationViaBrowser(productUrl, ean, storeId);
 }
