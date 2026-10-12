@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import { logger } from "../logger.ts";
 import type { Product, SearchResult, Store } from "../types.ts";
+import { fetchWithRetry } from "./http-retry.ts";
 import { getContext } from "./session.ts";
 
 export const ORIGIN = "https://www.s-kaupat.fi";
@@ -214,7 +215,7 @@ async function fetchProducts(
 		JSON.stringify({ persistedQuery: { version: 1, sha256Hash: hash } }),
 	);
 
-	const response = await fetch(url, {
+	const response = await fetchWithRetry(url, {
 		headers: {
 			Origin: ORIGIN,
 			Referer: `${ORIGIN}/`,

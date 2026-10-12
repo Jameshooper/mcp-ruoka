@@ -1,3 +1,4 @@
+import { fetchWithRetry } from "./http-retry.ts";
 import { API_TIMEOUT, API_URL, ORIGIN } from "./s-kaupat.ts";
 
 const UA =
@@ -43,7 +44,7 @@ export async function fetchProductFields(
 
 	await acquire();
 	try {
-		const response = await fetch(url, {
+		const response = await fetchWithRetry(url, {
 			headers: {
 				Origin: ORIGIN,
 				Referer: `${ORIGIN}/`,
