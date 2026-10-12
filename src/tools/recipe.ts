@@ -16,6 +16,12 @@ const IngredientSchema = z.object({
 		.describe(
 			"Finnish search terms for this ingredient, best guess first, then alternatives or synonyms (e.g., ['kuohukerma', 'ruokakerma']). Use the base/singular store-style name, not an inflected form.",
 		),
+	pantry: z
+		.boolean()
+		.optional()
+		.describe(
+			"True for staples the cook probably already has (oil, salt, sugar, common dried spices, flour, stock cubes). They are still looked up and priced, but listed and costed separately from what must be bought.",
+		),
 	quantity: z
 		.object({
 			amount: z.number().positive(),
@@ -33,6 +39,7 @@ interface CostedProduct extends Product {
 
 interface IngredientResult {
 	english: string;
+	pantry: boolean;
 	status: "found" | "not_found" | "error";
 	matchedTerm: string | null;
 	triedTerms: string[];
@@ -165,6 +172,7 @@ async function resolveIngredient(
 			if (result.products.length > 0) {
 				return {
 					english: ingredient.english,
+					pantry: ingredient.pantry === true,
 					status: "found",
 					matchedTerm: term,
 					triedTerms,
@@ -174,6 +182,7 @@ async function resolveIngredient(
 		}
 		return {
 			english: ingredient.english,
+			pantry: ingredient.pantry === true,
 			status: "not_found",
 			matchedTerm: null,
 			triedTerms,
@@ -183,6 +192,7 @@ async function resolveIngredient(
 		logger.error({ err: error, ingredient: ingredient.english, chain, storeId }, "Lookup failed");
 		return {
 			english: ingredient.english,
+			pantry: ingredient.pantry === true,
 			status: "error",
 			matchedTerm: null,
 			triedTerms,
@@ -211,6 +221,7 @@ function summarizeCosts(
 	results: IngredientResult[],
 	ingredients: Array<z.infer<typeof IngredientSchema>>,
 	servings: number | undefined,
+	pantry: boolean,
 ): CostSummary | null {
 	const top: OkCost[] = [];
 	const cheapest: OkCost[] = [];
@@ -218,6 +229,7 @@ function summarizeCosts(
 	let anyQuantity = false;
 
 	for (const [i, result] of results.entries()) {
+		if (result.pantry !== pantry) continue;
 		const quantity = ingredients[i]?.quantity;
 		if (!quantity) {
 			uncosted.push({ ingredient: result.english, reason: "no quantity given" });
@@ -260,6 +272,9 @@ function summarizeCosts(
 		cheapest: sumCosts(cheapest, servings),
 		uncosted,
 		explanation:
+			(pantry
+				? "Pantry staples only: not part of the shopping total. "
+				: "Items to buy only, pantry staples excluded. ") +
 			"basketTotal = whole packs you must buy; usedTotal = pro-rata cost of just the amounts the recipe uses. topMatch uses each ingredient's first search result, cheapest the lowest basket cost among the candidates returned; candidates matching an avoided allergen are never used.",
 	};
 }
@@ -269,7 +284,7 @@ export function registerRecipeTool(server: McpServer): void {
 		"find_recipe_ingredients",
 		{
 			description:
-				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. Give each ingredient's total quantity (scaled for the number of servings) and the servings count to also get costs: per product the packs needed and basket vs used cost, and recipe totals including per person. Pass avoidAllergens (Finnish and English terms) to check every candidate's declared allergens and ingredients and keep flagged ones out of the cost totals. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock is not exposed. With includeLocation (S-Kaupat only) the top candidate(s) per ingredient also get their in-store aisle and floor. Each carries locationStatus: found, none (the store lists no aisle), unknown (lookup failed) or pending (still loading when the call's time budget ran out: repeat the same call shortly and it will be answered from cache).",
+				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. Mark staples the cook likely already owns (oil, salt, sugar, common dried spices) with pantry: true; they are still looked up and priced, but returned with pantry: true and costed separately in pantryCost, while cost covers only what must be bought, so present two lists and two totals. Give each ingredient's total quantity (scaled for the number of servings) and the servings count to also get costs: per product the packs needed and basket vs used cost, and recipe totals including per person. Pass avoidAllergens (Finnish and English terms) to check every candidate's declared allergens and ingredients and keep flagged ones out of the cost totals. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock is not exposed. With includeLocation (S-Kaupat only) the top candidate(s) per ingredient also get their in-store aisle and floor. Each carries locationStatus: found, none (the store lists no aisle), unknown (lookup failed) or pending (still loading when the call's time budget ran out: repeat the same call shortly and it will be answered from cache).",
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]).describe("Which chain's store to check"),
 				storeId: z.string().min(1).describe("Store ID from get_stores"),
@@ -359,7 +374,8 @@ export function registerRecipeTool(server: McpServer): void {
 				if (!quantity) continue;
 				for (const product of result.products) product.costing = costProduct(product, quantity);
 			}
-			const cost = summarizeCosts(results, ingredients, servings);
+			const cost = summarizeCosts(results, ingredients, servings, false);
+			const pantryCost = summarizeCosts(results, ingredients, servings, true);
 
 			const summary = {
 				chain,
@@ -383,7 +399,11 @@ export function registerRecipeTool(server: McpServer): void {
 				content: [
 					{
 						type: "text" as const,
-						text: JSON.stringify({ summary, ...(cost && { cost }), results }, null, 2),
+						text: JSON.stringify(
+							{ summary, ...(cost && { cost }), ...(pantryCost && { pantryCost }), results },
+							null,
+							2,
+						),
 					},
 				],
 			};
