@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { getProductLocation } from "../browser/s-kaupat-location.ts";
+import { type CostResult, type CostTotals, costProduct, sumCosts } from "../costing.ts";
 import { logger } from "../logger.ts";
 import type { Product } from "../types.ts";
 import { runSearch } from "./search.ts";
@@ -14,14 +15,27 @@ const IngredientSchema = z.object({
 		.describe(
 			"Finnish search terms for this ingredient, best guess first, then alternatives or synonyms (e.g., ['kuohukerma', 'ruokakerma']). Use the base/singular store-style name, not an inflected form.",
 		),
+	quantity: z
+		.object({
+			amount: z.number().positive(),
+			unit: z.enum(["g", "kg", "ml", "l", "pcs"]),
+		})
+		.optional()
+		.describe(
+			"TOTAL amount needed for everyone being served (already scaled to the number of servings). Convert spoons and cups to g or ml. Use grams for loose produce sold by weight (onion, garlic, peppers) and pcs only for items priced per piece. Enables costing.",
+		),
 });
+
+interface CostedProduct extends Product {
+	costing?: CostResult;
+}
 
 interface IngredientResult {
 	english: string;
 	status: "found" | "not_found" | "error";
 	matchedTerm: string | null;
 	triedTerms: string[];
-	products: Product[];
+	products: CostedProduct[];
 	error?: string;
 }
 
@@ -60,7 +74,7 @@ async function attachLocations(
 	deadline: number,
 ): Promise<LocationTally> {
 	const lookups: Promise<void>[] = [];
-	const targets: Product[] = [];
+	const targets: CostedProduct[] = [];
 
 	for (const result of results) {
 		for (const product of result.products.slice(0, topN)) {
@@ -139,16 +153,84 @@ async function resolveIngredient(
 	}
 }
 
+type OkCost = Extract<CostResult, { status: "ok" }>;
+
+interface CostSummary {
+	servings?: number;
+	currency: "EUR";
+	topMatch: CostTotals;
+	cheapest: CostTotals;
+	uncosted: Array<{ ingredient: string; reason: string }>;
+	explanation: string;
+}
+
+function okCost(product: CostedProduct): OkCost | null {
+	return product.costing?.status === "ok" ? product.costing : null;
+}
+
+function summarizeCosts(
+	results: IngredientResult[],
+	ingredients: Array<z.infer<typeof IngredientSchema>>,
+	servings: number | undefined,
+): CostSummary | null {
+	const top: OkCost[] = [];
+	const cheapest: OkCost[] = [];
+	const uncosted: CostSummary["uncosted"] = [];
+	let anyQuantity = false;
+
+	for (const [i, result] of results.entries()) {
+		const quantity = ingredients[i]?.quantity;
+		if (!quantity) {
+			uncosted.push({ ingredient: result.english, reason: "no quantity given" });
+			continue;
+		}
+		anyQuantity = true;
+
+		const costed = result.products.flatMap((p) => okCost(p) ?? []);
+		const first = result.products[0] && okCost(result.products[0]);
+		const lowest = costed.reduce<OkCost | null>(
+			(best, c) => (!best || c.basketCost < best.basketCost ? c : best),
+			null,
+		);
+		if (first && lowest) {
+			top.push(first);
+			cheapest.push(lowest);
+		} else {
+			uncosted.push({
+				ingredient: result.english,
+				reason: result.status === "found" ? "price or unit not comparable" : result.status,
+			});
+		}
+	}
+
+	if (!anyQuantity) return null;
+	return {
+		...(servings && { servings }),
+		currency: "EUR",
+		topMatch: sumCosts(top, servings),
+		cheapest: sumCosts(cheapest, servings),
+		uncosted,
+		explanation:
+			"basketTotal = whole packs you must buy; usedTotal = pro-rata cost of just the amounts the recipe uses. topMatch uses each ingredient's first search result, cheapest the lowest basket cost among the candidates returned.",
+	};
+}
+
 export function registerRecipeTool(server: McpServer): void {
 	server.registerTool(
 		"find_recipe_ingredients",
 		{
 			description:
-				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock is not exposed. With includeLocation (S-Kaupat only) the top candidate(s) per ingredient also get their in-store aisle and floor. Each carries locationStatus: found, none (the store lists no aisle), unknown (lookup failed) or pending (still loading when the call's time budget ran out: repeat the same call shortly and it will be answered from cache).",
+				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. Give each ingredient's total quantity (scaled for the number of servings) and the servings count to also get costs: per product the packs needed and basket vs used cost, and recipe totals including per person. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock is not exposed. With includeLocation (S-Kaupat only) the top candidate(s) per ingredient also get their in-store aisle and floor. Each carries locationStatus: found, none (the store lists no aisle), unknown (lookup failed) or pending (still loading when the call's time budget ran out: repeat the same call shortly and it will be answered from cache).",
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]).describe("Which chain's store to check"),
 				storeId: z.string().min(1).describe("Store ID from get_stores"),
 				ingredients: z.array(IngredientSchema).min(1).max(40),
+				servings: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.describe("How many people the quantities feed; used for per-person cost."),
 				includeLocation: z
 					.boolean()
 					.optional()
@@ -180,6 +262,7 @@ export function registerRecipeTool(server: McpServer): void {
 			chain,
 			storeId,
 			ingredients,
+			servings,
 			limitPerIngredient,
 			includeLocation,
 			locationForTopN,
@@ -196,6 +279,13 @@ export function registerRecipeTool(server: McpServer): void {
 					? await attachLocations(results, storeId, locationForTopN, deadline)
 					: null;
 
+			for (const [i, result] of results.entries()) {
+				const quantity = ingredients[i]?.quantity;
+				if (!quantity) continue;
+				for (const product of result.products) product.costing = costProduct(product, quantity);
+			}
+			const cost = summarizeCosts(results, ingredients, servings);
+
 			const summary = {
 				chain,
 				storeId,
@@ -211,7 +301,12 @@ export function registerRecipeTool(server: McpServer): void {
 			};
 
 			return {
-				content: [{ type: "text" as const, text: JSON.stringify({ summary, results }, null, 2) }],
+				content: [
+					{
+						type: "text" as const,
+						text: JSON.stringify({ summary, ...(cost && { cost }), results }, null, 2),
+					},
+				],
 			};
 		},
 	);
