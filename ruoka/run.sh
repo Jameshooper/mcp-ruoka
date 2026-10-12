@@ -2,6 +2,9 @@
 set -euo pipefail
 
 OPTIONS=/data/options.json
+
+# Shows which code this image really contains (compare with the latest commit on GitHub)
+echo "Ruoka source: $(git -C /app log -1 --format='%h %s')"
 opt() { jq -r --arg k "$1" '.[$k] // ""' "$OPTIONS"; }
 
 MCP_AUTH_TOKEN="$(opt mcp_auth_token)"
