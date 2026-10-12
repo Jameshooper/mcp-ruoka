@@ -78,11 +78,10 @@ async function attachLocations(
 
 	for (const result of results) {
 		for (const product of result.products.slice(0, topN)) {
-			if (!product.url) continue;
 			targets.push(product);
 			// Lookups that miss the deadline keep running and fill the cache for the next call
 			lookups.push(
-				getProductLocation(product.url, product.id, storeId).then(
+				getProductLocation(product.id, storeId).then(
 					(r) => {
 						product.location = r.location;
 						product.locationStatus = r.status;
@@ -242,11 +241,11 @@ export function registerRecipeTool(server: McpServer): void {
 					.number()
 					.int()
 					.min(1)
-					.max(5)
+					.max(10)
 					.optional()
-					.default(1)
+					.default(3)
 					.describe(
-						"With includeLocation: how many of each ingredient's top candidates get a shelf lookup (default: 1).",
+						"With includeLocation: how many of each ingredient's top candidates get a shelf lookup (default: 3).",
 					),
 				limitPerIngredient: z
 					.number()
