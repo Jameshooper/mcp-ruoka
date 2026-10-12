@@ -35,6 +35,8 @@ async function launch(): Promise<void> {
 	try {
 		context = await chromium.launchPersistentContext(dataDir, {
 			headless: true,
+			// Containers (e.g. Home Assistant apps) often get a 64MB /dev/shm, which crashes Chromium
+			args: ["--disable-dev-shm-usage"],
 			userAgent:
 				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 			locale: "fi-FI",
@@ -47,6 +49,8 @@ async function launch(): Promise<void> {
 		}
 		context = await chromium.launchPersistentContext(dataDir, {
 			headless: true,
+			// Containers (e.g. Home Assistant apps) often get a 64MB /dev/shm, which crashes Chromium
+			args: ["--disable-dev-shm-usage"],
 			userAgent:
 				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 			locale: "fi-FI",

@@ -88,6 +88,17 @@ For remote deployments. Deploy first (see above), then point your MCP client at 
 
 For direct bearer token auth, set `MCP_AUTH_TOKEN` as a Fly secret and use it in the header above. For OAuth, configure `OAUTH_CLIENT_ID` and `OAUTH_CLIENT_SECRET` on both the server and your MCP client.
 
+## Run as a Home Assistant app
+
+`ruoka/` is a Home Assistant app that runs the HTTP server with its own Tailscale node and exposes it through [Tailscale Funnel](https://tailscale.com/kb/1223/funnel), so claude.ai (and the iOS app) can reach it as a custom connector.
+
+1. In the Tailscale admin console: enable HTTPS certificates (DNS page), allow Funnel for your devices (access controls: `nodeAttrs` with `"attr": ["funnel"]`), and create a reusable auth key.
+2. In Home Assistant: Settings → Apps → App store → ⋮ → Repositories, add `https://github.com/Jameshooper/mcp-ruoka`, then install **Ruoka MCP**.
+3. In the app's Configuration tab set `oauth_client_id` and `oauth_client_secret` (`openssl rand -hex 32` each), `tailscale_auth_key`, and optionally `tailscale_hostname`. Start the app.
+4. In claude.ai: Settings → Connectors → Add custom connector, URL `https://<hostname>.<your-tailnet>.ts.net/mcp`, with the OAuth client ID and secret under advanced settings.
+
+The app builds by cloning this repo at `RUOKA_REF` (a build arg in `ruoka/Dockerfile`); bump `version` in `ruoka/config.yaml` to make Home Assistant rebuild with newer commits.
+
 ## Local development
 
 ```bash
