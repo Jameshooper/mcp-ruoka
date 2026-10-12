@@ -259,13 +259,13 @@ async function lookupViaBrowser(
 					resolve({ status: "unknown", location: null });
 				}, BROWSER_LOCATION_TIMEOUT);
 
+				// A request only becomes the replay template once its own response proves to be
+				// product data; the complementary-products query also carries the EAN and store ID
+				const candidates = new Map<string, ProductQueryTemplate>();
 				page.on("request", (request) => {
 					if (productTemplate || !request.url().startsWith(API_URL)) return;
 					const template = buildProductQueryTemplate(request.url(), ean, storeId);
-					if (template) {
-						productTemplate = template;
-						logger.info({ operation: template.operationName }, "Captured product query template");
-					}
+					if (template) candidates.set(request.url(), template);
 				});
 
 				page.on("response", async (res) => {
@@ -276,6 +276,11 @@ async function lookupViaBrowser(
 					if (!parsed.success) return;
 					const product = parsed.data.data.product;
 					if (product.ean !== ean || product.storeId !== storeId) return;
+					const template = candidates.get(res.url());
+					if (template && !productTemplate) {
+						productTemplate = template;
+						logger.info({ operation: template.operationName }, "Captured product query template");
+					}
 					resolve(interpretLocation(product.location, ean));
 				});
 			});
