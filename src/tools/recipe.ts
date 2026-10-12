@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
+import { getProductAllergens, matchAvoidTerms } from "../browser/s-kaupat-allergens.ts";
 import { getProductLocation } from "../browser/s-kaupat-location.ts";
 import { type CostResult, type CostTotals, costProduct, sumCosts } from "../costing.ts";
 import { logger } from "../logger.ts";
@@ -67,31 +68,58 @@ interface LocationTally {
 	pending: number;
 }
 
-async function attachLocations(
+interface DetailTallies {
+	locations: LocationTally | null;
+	allergens: { flagged: number; no_match: number; unknown: number; pending: number } | null;
+}
+
+interface DetailOptions {
+	// null skips shelf lookups; otherwise this many top candidates per ingredient get one
+	locationTopN: number | null;
+	avoidTerms: string[];
+}
+
+// Lookups that miss the deadline keep running and fill the cache for the next call
+async function attachProductDetails(
 	results: IngredientResult[],
 	storeId: string,
-	topN: number,
+	options: DetailOptions,
 	deadline: number,
-): Promise<LocationTally> {
+): Promise<DetailTallies> {
 	const lookups: Promise<void>[] = [];
-	const targets: CostedProduct[] = [];
+	const locationTargets: CostedProduct[] = [];
+	const allergenTargets: CostedProduct[] = [];
 
 	for (const result of results) {
-		for (const product of result.products.slice(0, topN)) {
-			targets.push(product);
-			// Lookups that miss the deadline keep running and fill the cache for the next call
-			lookups.push(
-				getProductLocation(product.id, storeId).then(
-					(r) => {
-						product.location = r.location;
-						product.locationStatus = r.status;
-					},
-					(error) => {
-						logger.warn({ err: error, ean: product.id }, "Shelf location lookup failed");
-						product.locationStatus = "unknown";
-					},
-				),
-			);
+		for (const [i, product] of result.products.entries()) {
+			if (options.locationTopN !== null && i < options.locationTopN) {
+				locationTargets.push(product);
+				lookups.push(
+					getProductLocation(product.id, storeId).then(
+						(r) => {
+							product.location = r.location;
+							product.locationStatus = r.status;
+						},
+						() => {
+							product.locationStatus = "unknown";
+						},
+					),
+				);
+			}
+			if (options.avoidTerms.length > 0) {
+				allergenTargets.push(product);
+				lookups.push(
+					getProductAllergens(product.id, storeId).then(
+						(details) => {
+							product.allergenCheck = matchAvoidTerms(details, options.avoidTerms);
+						},
+						(error) => {
+							logger.warn({ err: error, ean: product.id }, "Allergen check failed");
+							product.allergenCheck = { status: "unknown", flags: [] };
+						},
+					),
+				);
+			}
 		}
 	}
 
@@ -101,12 +129,24 @@ async function attachLocations(
 		new Promise<void>((resolve) => setTimeout(resolve, remaining)),
 	]);
 
-	const tally: LocationTally = { found: 0, none: 0, unknown: 0, pending: 0 };
-	for (const product of targets) {
-		product.locationStatus ??= "pending";
-		tally[product.locationStatus]++;
+	let locations: LocationTally | null = null;
+	if (options.locationTopN !== null) {
+		locations = { found: 0, none: 0, unknown: 0, pending: 0 };
+		for (const product of locationTargets) {
+			product.locationStatus ??= "pending";
+			locations[product.locationStatus]++;
+		}
 	}
-	return tally;
+
+	let allergens: DetailTallies["allergens"] = null;
+	if (options.avoidTerms.length > 0) {
+		allergens = { flagged: 0, no_match: 0, unknown: 0, pending: 0 };
+		for (const product of allergenTargets) {
+			product.allergenCheck ??= { status: "pending", flags: [] };
+			allergens[product.allergenCheck.status]++;
+		}
+	}
+	return { locations, allergens };
 }
 
 async function resolveIngredient(
@@ -185,8 +225,18 @@ function summarizeCosts(
 		}
 		anyQuantity = true;
 
-		const costed = result.products.flatMap((p) => okCost(p) ?? []);
-		const first = result.products[0] && okCost(result.products[0]);
+		// A product that matches an avoided allergen must never be recommended
+		const eligible = result.products.filter((p) => p.allergenCheck?.status !== "flagged");
+		if (result.products.length > 0 && eligible.length === 0) {
+			uncosted.push({
+				ingredient: result.english,
+				reason: "every candidate matches an avoided allergen",
+			});
+			continue;
+		}
+
+		const costed = eligible.flatMap((p) => okCost(p) ?? []);
+		const first = eligible[0] && okCost(eligible[0]);
 		const lowest = costed.reduce<OkCost | null>(
 			(best, c) => (!best || c.basketCost < best.basketCost ? c : best),
 			null,
@@ -210,7 +260,7 @@ function summarizeCosts(
 		cheapest: sumCosts(cheapest, servings),
 		uncosted,
 		explanation:
-			"basketTotal = whole packs you must buy; usedTotal = pro-rata cost of just the amounts the recipe uses. topMatch uses each ingredient's first search result, cheapest the lowest basket cost among the candidates returned.",
+			"basketTotal = whole packs you must buy; usedTotal = pro-rata cost of just the amounts the recipe uses. topMatch uses each ingredient's first search result, cheapest the lowest basket cost among the candidates returned; candidates matching an avoided allergen are never used.",
 	};
 }
 
@@ -219,11 +269,18 @@ export function registerRecipeTool(server: McpServer): void {
 		"find_recipe_ingredients",
 		{
 			description:
-				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. Give each ingredient's total quantity (scaled for the number of servings) and the servings count to also get costs: per product the packs needed and basket vs used cost, and recipe totals including per person. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock is not exposed. With includeLocation (S-Kaupat only) the top candidate(s) per ingredient also get their in-store aisle and floor. Each carries locationStatus: found, none (the store lists no aisle), unknown (lookup failed) or pending (still loading when the call's time budget ran out: repeat the same call shortly and it will be answered from cache).",
+				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. Give each ingredient's total quantity (scaled for the number of servings) and the servings count to also get costs: per product the packs needed and basket vs used cost, and recipe totals including per person. Pass avoidAllergens (Finnish and English terms) to check every candidate's declared allergens and ingredients and keep flagged ones out of the cost totals. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock is not exposed. With includeLocation (S-Kaupat only) the top candidate(s) per ingredient also get their in-store aisle and floor. Each carries locationStatus: found, none (the store lists no aisle), unknown (lookup failed) or pending (still loading when the call's time budget ran out: repeat the same call shortly and it will be answered from cache).",
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]).describe("Which chain's store to check"),
 				storeId: z.string().min(1).describe("Store ID from get_stores"),
 				ingredients: z.array(IngredientSchema).min(1).max(40),
+				avoidAllergens: z
+					.array(z.string().min(2))
+					.max(15)
+					.optional()
+					.describe(
+						"Terms to look for in each candidate's declared allergens and ingredient list, to steer around them. Give Finnish AND English/Latin forms and stems (e.g. for cashews: ['cashew', 'cashewpähkin', 'kasjupähkin', 'pähkin']). Flagged products are reported and never chosen in the cost totals. 'no_match' is not a safety guarantee: traces are not visible here, so always check the label.",
+					),
 				servings: z
 					.number()
 					.int()
@@ -262,6 +319,7 @@ export function registerRecipeTool(server: McpServer): void {
 			storeId,
 			ingredients,
 			servings,
+			avoidAllergens,
 			limitPerIngredient,
 			includeLocation,
 			locationForTopN,
@@ -273,10 +331,28 @@ export function registerRecipeTool(server: McpServer): void {
 				resolveIngredient(ingredient, chain, storeId, limitPerIngredient),
 			);
 
-			const locations =
-				includeLocation && chain === "s-kaupat"
-					? await attachLocations(results, storeId, locationForTopN, deadline)
+			const avoidTerms = avoidAllergens ?? [];
+			const details =
+				chain === "s-kaupat" && (includeLocation || avoidTerms.length > 0)
+					? await attachProductDetails(
+							results,
+							storeId,
+							{ locationTopN: includeLocation ? locationForTopN : null, avoidTerms },
+							deadline,
+						)
 					: null;
+			const locations = details?.locations ?? null;
+			const allergens = details?.allergens ?? null;
+			const allergenWarnings = results.flatMap((r) =>
+				r.products
+					.filter((p) => p.allergenCheck?.status === "flagged")
+					.map((p) => ({
+						ingredient: r.english,
+						product: p.name,
+						id: p.id,
+						flags: p.allergenCheck?.flags ?? [],
+					})),
+			);
 
 			for (const [i, result] of results.entries()) {
 				const quantity = ingredients[i]?.quantity;
@@ -291,11 +367,15 @@ export function registerRecipeTool(server: McpServer): void {
 				found: results.filter((r) => r.status === "found").length,
 				notFound: results.filter((r) => r.status === "not_found").map((r) => r.english),
 				errors: results.filter((r) => r.status === "error").map((r) => r.english),
-				...(locations && {
-					locations,
-					...(locations.pending > 0 && {
-						note: "Some shelf locations were still loading; repeat the same call in a minute and they will be returned from cache.",
-					}),
+				...(locations && { locations }),
+				...(allergens && {
+					allergens,
+					allergenWarnings,
+					allergenNote:
+						"no_match means none of the avoided terms appear in the declared allergens or ingredients; it does not rule out traces or undeclared ingredients, so check the label.",
+				}),
+				...((locations?.pending ?? 0) + (allergens?.pending ?? 0) > 0 && {
+					note: "Some lookups were still loading; repeat the same call in a minute and they will be returned from cache.",
 				}),
 			};
 

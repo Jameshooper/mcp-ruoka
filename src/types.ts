@@ -5,6 +5,18 @@ export interface ProductLocation {
 	floor: number | null;
 }
 
+export interface AllergenFlag {
+	term: string;
+	source: "declared allergens" | "ingredients";
+	text: string;
+	level: string | null;
+}
+
+export interface AllergenCheck {
+	status: "flagged" | "no_match" | "unknown" | "pending";
+	flags: AllergenFlag[];
+}
+
 export type LocationStatus = "found" | "none" | "unknown" | "pending";
 
 export interface Product {
@@ -19,6 +31,7 @@ export interface Product {
 	url?: string | null;
 	location?: ProductLocation | null;
 	locationStatus?: LocationStatus;
+	allergenCheck?: AllergenCheck;
 }
 
 export interface Store {
