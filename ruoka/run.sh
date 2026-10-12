@@ -35,6 +35,9 @@ if [ -n "$TS_AUTH_KEY" ]; then
   tailscale up --auth-key="$TS_AUTH_KEY" --hostname="${TS_HOSTNAME:-ruoka}"
   tailscale funnel --bg 3001
   tailscale funnel status
+
+  # Funnel only gets a public address when the tailnet policy grants this node the "funnel" attribute
+  echo "Tailscale node: $(tailscale status --json | jq -c '{DNSName: .Self.DNSName, Online: .Self.Online, Attributes: ((.Self.CapMap // {}) | keys)}')"
 else
   echo "No tailscale_auth_key set: not using Funnel; reachable on the host at port 3001" >&2
 fi
