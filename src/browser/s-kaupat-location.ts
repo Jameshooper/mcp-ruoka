@@ -82,15 +82,24 @@ export function parseProductPageLocation(html: string, ean: string): ProductPage
 	return { pageStoreId, result: { status: "unknown", location: null } };
 }
 
+// The location itself is interpreted separately so an unexpected shape is reported as
+// "unknown" with a log line instead of silently never matching
 const ClientProductResponseSchema = z.object({
 	data: z.object({
 		product: z.object({
 			ean: z.string(),
 			storeId: z.string(),
-			location: LocationSchema,
+			location: z.unknown().optional(),
 		}),
 	}),
 });
+
+function interpretLocation(raw: unknown, ean: string): LocationResult {
+	const parsed = LocationSchema.safeParse(raw);
+	if (parsed.success) return toResult(parsed.data);
+	logger.warn({ ean, raw }, "Unrecognized product location shape");
+	return { status: "unknown", location: null };
+}
 
 const ExtensionsSchema = z.object({
 	persistedQuery: z.object({ sha256Hash: z.string() }),
@@ -189,7 +198,7 @@ async function lookupViaReplay(ean: string, storeId: string): Promise<LocationRe
 	const product = parsed.data.data.product;
 	// Matching on storeId keeps another store's shelf from being reported
 	if (product.ean !== ean || product.storeId !== storeId) return null;
-	return toResult(product.location);
+	return interpretLocation(product.location, ean);
 }
 
 let activePages = 0;
@@ -210,18 +219,11 @@ function releasePageSlot(): void {
 }
 
 async function lightenPage(page: Page): Promise<void> {
-	// Only the site's own scripts and API calls matter; images, fonts and third-party
-	// trackers just slow the page down
+	// Only resources that cannot affect the app's data requests are dropped; blocking scripts
+	// or third-party hosts risks breaking the app's startup
 	await page.route("**/*", async (route) => {
-		const request = route.request();
-		const type = request.resourceType();
-		let host = "";
-		try {
-			host = new URL(request.url()).hostname;
-		} catch {
-			// Unparseable URLs are not worth loading
-		}
-		if (type === "image" || type === "media" || type === "font" || !host.endsWith("s-kaupat.fi")) {
+		const type = route.request().resourceType();
+		if (type === "image" || type === "media" || type === "font") {
 			await route.abort();
 		} else {
 			await route.continue();
@@ -247,9 +249,13 @@ async function lookupViaBrowser(
 			await page.addInitScript(`localStorage.setItem("store-storage", ${JSON.stringify(seed)})`);
 
 			let timer: ReturnType<typeof setTimeout> | undefined;
+			const operationsSeen = new Set<string>();
 			const outcome = new Promise<LocationResult>((resolve) => {
 				timer = setTimeout(() => {
-					logger.warn({ ean, storeId }, "Timed out waiting for store-specific product data");
+					logger.warn(
+						{ ean, storeId, operationsSeen: [...operationsSeen] },
+						"Timed out waiting for store-specific product data",
+					);
 					resolve({ status: "unknown", location: null });
 				}, BROWSER_LOCATION_TIMEOUT);
 
@@ -264,12 +270,13 @@ async function lookupViaBrowser(
 
 				page.on("response", async (res) => {
 					if (!res.url().startsWith(API_URL)) return;
+					operationsSeen.add(new URL(res.url()).searchParams.get("operationName") ?? "?");
 					const body: unknown = await res.json().catch(() => null);
 					const parsed = ClientProductResponseSchema.safeParse(body);
 					if (!parsed.success) return;
 					const product = parsed.data.data.product;
 					if (product.ean !== ean || product.storeId !== storeId) return;
-					resolve(toResult(product.location));
+					resolve(interpretLocation(product.location, ean));
 				});
 			});
 
