@@ -7,7 +7,8 @@ opt() { jq -r --arg k "$1" '.[$k] // ""' "$OPTIONS"; }
 MCP_AUTH_TOKEN="$(opt mcp_auth_token)"
 OAUTH_CLIENT_ID="$(opt oauth_client_id)"
 OAUTH_CLIENT_SECRET="$(opt oauth_client_secret)"
-TS_AUTH_KEY="$(opt tailscale_auth_key)"
+# Pasted keys often carry stray whitespace or quotes
+TS_AUTH_KEY="$(opt tailscale_auth_key | tr -d '[:space:]"' | tr -d "'")"
 TS_HOSTNAME="$(opt tailscale_hostname)"
 
 # The published port is reachable from the whole LAN, so never run it open
@@ -17,6 +18,13 @@ if [ -z "$MCP_AUTH_TOKEN" ] && { [ -z "$OAUTH_CLIENT_ID" ] || [ -z "$OAUTH_CLIEN
 fi
 
 if [ -n "$TS_AUTH_KEY" ]; then
+  case "$TS_AUTH_KEY" in
+    tskey-auth-*) ;;
+    *)
+      echo "tailscale_auth_key must be an auth key starting with tskey-auth- (Tailscale admin: Settings > Keys > Generate auth key). API access tokens (tskey-api-) will not work." >&2
+      exit 1
+      ;;
+  esac
   mkdir -p /data/tailscale /var/run/tailscale
   tailscaled --tun=userspace-networking \
     --state=/data/tailscale/tailscaled.state \
