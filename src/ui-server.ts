@@ -1,9 +1,12 @@
 import { join } from "node:path";
 import * as z from "zod/v4";
 import { logger } from "./logger.ts";
+import { deletePlan, findPlan, listPlans, setChecked } from "./plan-book.ts";
 import { deleteRecipe, findRecipe, listRecipes, rateRecipe, scaleRecipe } from "./recipe-book.ts";
 
 const indexPath = join(import.meta.dirname, "ui", "index.html");
+
+const CheckedBodySchema = z.object({ checked: z.array(z.string()).max(200) });
 
 const RatingBodySchema = z.object({
 	rating: z.number().int().min(1).max(5).nullable(),
@@ -27,6 +30,33 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 
 	if (path === "/api/recipes" && req.method === "GET") {
 		return json({ recipes: await listRecipes() });
+	}
+
+	if (path === "/api/plans" && req.method === "GET") {
+		return json({ plans: await listPlans() });
+	}
+
+	const planMatch = /^\/api\/plans\/([^/]+)(\/checked)?$/.exec(path);
+	if (planMatch?.[1]) {
+		const planId = decodeURIComponent(planMatch[1]);
+		if (!planMatch[2] && req.method === "GET") {
+			const plan = await findPlan(planId);
+			return plan ? json(plan) : json({ error: "Plan not found" }, 404);
+		}
+		if (!planMatch[2] && req.method === "DELETE") {
+			const removed = await deletePlan(planId);
+			return removed ? json({ deleted: removed.id }) : json({ error: "Plan not found" }, 404);
+		}
+		if (planMatch[2] && req.method === "PUT") {
+			if (!req.headers.get("content-type")?.includes("application/json")) {
+				return json({ error: "Expected JSON" }, 415);
+			}
+			const body = CheckedBodySchema.safeParse(await req.json().catch(() => null));
+			if (!body.success) return json({ error: "Expected a list of product ids" }, 400);
+			const updated = await setChecked(planId, body.data.checked);
+			return updated ? json(updated) : json({ error: "Plan not found" }, 404);
+		}
+		return json({ error: "Method not allowed" }, 405);
 	}
 
 	const match = /^\/api\/recipes\/([^/]+)(\/rating)?$/.exec(path);

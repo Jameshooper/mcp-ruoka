@@ -33,11 +33,13 @@ const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
 const { registerMealPlanTool } = await import("./meal-plan.ts");
 const { registerRecipeBookTools } = await import("./recipe-book.ts");
+const { registerPlanBookTools } = await import("./plan-book.ts");
 
 async function connect() {
 	const server = new McpServer({ name: "t", version: "1" });
 	registerMealPlanTool(server);
 	registerRecipeBookTools(server);
+	registerPlanBookTools(server);
 	const [a, b] = InMemoryTransport.createLinkedPair();
 	const client = new Client({ name: "c", version: "1" });
 	await Promise.all([server.connect(a), client.connect(b)]);
@@ -153,4 +155,45 @@ test("balance and nutrition come from recipe tags and inline overrides", async (
 	expect(out.balance.issues).toHaveLength(1);
 	expect(out.balance.issues[0]).toContain("Tue");
 	expect(out.nutrition.average).toEqual({ kcalPerPortion: 660, proteinPerPortionG: 41.5 });
+});
+
+test("saveAs stores the plan and replacing it keeps still-valid ticks", async () => {
+	const { findPlan, listPlans, setChecked } = await import("../plan-book.ts");
+	const client = await connect();
+	const args = {
+		chain: "s-kaupat",
+		storeId: "1",
+		budget: 10,
+		saveAs: "Week 42",
+		meals: [
+			{
+				name: "Mon",
+				servings: 2,
+				protein: "fish",
+				vegetables: true,
+				ingredients: [
+					{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" } },
+				],
+			},
+		],
+	};
+	const first = parse(await client.callTool({ name: "plan_meals", arguments: args }));
+	expect(first.saved).toEqual({ id: "week-42", name: "Week 42", replaced: false });
+
+	const plan = await findPlan("WEEK 42");
+	expect(plan?.toBuy.lines[0]?.productId).toBe("211");
+	expect(plan?.budget).toBe(10);
+	expect(plan?.meals[0]?.protein).toBe("fish");
+
+	// unknown ids are dropped, known ones kept
+	expect((await setChecked("week-42", ["211", "999"]))?.checked).toEqual(["211"]);
+	const second = parse(await client.callTool({ name: "plan_meals", arguments: args }));
+	expect(second.saved.replaced).toBe(true);
+	expect((await findPlan("week-42"))?.checked).toEqual(["211"]);
+	expect((await listPlans()).filter((p) => p.id === "week-42")).toHaveLength(1);
+
+	const listed = parse(await client.callTool({ name: "list_meal_plans", arguments: {} }));
+	expect(listed.plans.some((p: { id: string }) => p.id === "week-42")).toBe(true);
+	const missing = await client.callTool({ name: "get_meal_plan", arguments: { plan: "nope" } });
+	expect((missing as { isError?: boolean }).isError).toBe(true);
 });

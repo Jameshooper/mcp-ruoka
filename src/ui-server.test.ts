@@ -104,3 +104,69 @@ test("re-saving a recipe keeps its rating", async () => {
 	expect(again?.review).toBe("Great");
 	expect(again?.notes).toBe("tweaked");
 });
+
+const SNAPSHOT = {
+	store: { chain: "s-kaupat" as const, storeId: "1" },
+	budget: 30,
+	meals: [{ name: "Mon", servings: 2 }],
+	toBuy: {
+		total: 2.75,
+		lines: [
+			{
+				ingredient: "rice",
+				needed: "200 g",
+				product: "Rice 1 kg",
+				productId: "211",
+				url: null,
+				packSize: "1 kg",
+				packages: 1,
+				unitPrice: "2,75 €/kg",
+				cost: 2.75,
+				leftover: "800 g",
+				leftoverValue: 2.2,
+				usedIn: ["Mon: 200 g"],
+				location: { aisle: "45", floor: 1 },
+			},
+		],
+	},
+	pantry: { total: 0, lines: [] },
+	balance: { balanced: true, issues: [], counts: { fish: 1 } },
+	nutrition: { average: null, missing: ["Mon"] },
+	waste: { leftoverValue: 2.2 },
+	pooling: { saved: 0 },
+};
+
+test("meal plans can be listed, ticked off and deleted", async () => {
+	const { savePlan } = await import("./plan-book.ts");
+	const { handleUiRequest } = await import("./ui-server.ts");
+	await savePlan("Week 42", SNAPSHOT);
+
+	const PlansJson = z.object({
+		plans: z.array(z.object({ id: z.string(), checked: z.array(z.string()) })),
+	});
+	const list = PlansJson.parse(
+		await (await handleUiRequest(new Request("http://x/api/plans"))).json(),
+	);
+	expect(list.plans.map((p) => p.id)).toContain("week-42");
+
+	const ticked = z
+		.object({ checked: z.array(z.string()) })
+		.parse(
+			await (
+				await handleUiRequest(put("/api/plans/week-42/checked", { checked: ["211", "x"] }))
+			).json(),
+		);
+	expect(ticked.checked).toEqual(["211"]);
+
+	expect(
+		(await handleUiRequest(put("/api/plans/week-42/checked", { checked: [] }, "text/plain")))
+			.status,
+	).toBe(415);
+	expect((await handleUiRequest(put("/api/plans/nope/checked", { checked: [] }))).status).toBe(404);
+
+	const del = await handleUiRequest(
+		new Request("http://x/api/plans/week-42", { method: "DELETE" }),
+	);
+	expect(del.status).toBe(200);
+	expect((await handleUiRequest(new Request("http://x/api/plans/week-42"))).status).toBe(404);
+});

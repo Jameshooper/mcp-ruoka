@@ -49,12 +49,26 @@ ul.ing li.pantry { color: var(--muted); }
 ol.steps { padding-left: 22px; }
 ol.steps li { margin-bottom: 6px; }
 textarea { width: 100%; min-height: 70px; }
+.tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+.tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.aisle { margin: 16px 0 4px; font-weight: 600; }
+label.line { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid var(--line); }
+label.line.done span.text { text-decoration: line-through; color: var(--muted); }
+label.line input { margin-top: 5px; width: 18px; height: 18px; flex: none; }
+.price { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.issue { color: #b45309; margin: 2px 0; }
+.ok { color: #15803d; }
+.stat { display: inline-block; margin-right: 14px; }
 .hidden { display: none; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Recipes</h1>
+  <h1 id="title">Recipes</h1>
+  <div class="tabs">
+    <button type="button" id="tab-recipes" class="active">Recipes</button>
+    <button type="button" id="tab-plans">Meal plans</button>
+  </div>
   <div id="list-view">
     <div class="toolbar">
       <input type="search" id="search" placeholder="Search name, ingredient or tag">
@@ -77,11 +91,15 @@ textarea { width: 100%; min-height: 70px; }
     <div id="empty" class="empty hidden"></div>
   </div>
   <div id="detail-view" class="hidden"></div>
+  <div id="plans-view" class="hidden">
+    <div id="plan-grid" class="grid"></div>
+    <div id="plan-empty" class="empty hidden"></div>
+  </div>
+  <div id="plan-detail-view" class="hidden"></div>
 </main>
 <script>
 "use strict";
 let recipes = [];
-let _openId = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -200,12 +218,11 @@ function formatQuantity(q, factor) {
 }
 
 async function showDetail(id) {
-  _openId = id;
   const recipe = recipes.find((r) => r.id === id);
   if (!recipe) return;
-  $("list-view").classList.add("hidden");
+  tab = "recipes";
+  show("detail-view");
   const view = $("detail-view");
-  view.classList.remove("hidden");
 
   const servings = el("input", { type: "number", min: "1", max: "100", value: String(recipe.servings), style: "width:80px" });
   const ingredients = el("ul", { class: "ing" });
@@ -275,10 +292,20 @@ async function showDetail(id) {
   window.scrollTo(0, 0);
 }
 
+let tab = "recipes";
+
+function show(viewId) {
+  for (const id of ["list-view", "detail-view", "plans-view", "plan-detail-view"]) {
+    $(id).classList.toggle("hidden", id !== viewId);
+  }
+  $("title").textContent = tab === "plans" ? "Meal plans" : "Recipes";
+  $("tab-recipes").classList.toggle("active", tab === "recipes");
+  $("tab-plans").classList.toggle("active", tab === "plans");
+}
+
 function closeDetail() {
-  _openId = null;
-  $("detail-view").classList.add("hidden");
-  $("list-view").classList.remove("hidden");
+  tab = "recipes";
+  show("list-view");
   renderList();
 }
 
@@ -289,6 +316,186 @@ async function remove(recipe) {
   renderTags();
   closeDetail();
 }
+
+let plans = [];
+
+const euro = (n) => `${n.toFixed(2)} €`;
+
+function planCard(plan) {
+  const date = new Date(plan.updatedAt).toLocaleDateString();
+  return el("div", { class: "card", onclick: () => showPlan(plan.id) },
+    el("h2", {}, plan.name),
+    el("div", { class: "meta" }, `${plan.meals.length} meals · ${date}`),
+    el("div", {}, `To buy ${euro(plan.toBuy.total)}`),
+    el("div", { class: "chips" },
+      el("span", { class: "chip" }, plan.balance.balanced ? "Balanced" : "Needs balance"),
+      plan.budget !== undefined
+        ? el("span", { class: "chip" }, plan.toBuy.total <= plan.budget ? "Within budget" : "Over budget")
+        : null,
+    ),
+  );
+}
+
+function renderPlans() {
+  $("plan-grid").replaceChildren(...plans.map(planCard));
+  const empty = $("plan-empty");
+  empty.classList.toggle("hidden", plans.length > 0);
+  empty.textContent = "No meal plans saved yet. Ask Claude to plan a week and save it.";
+}
+
+async function loadPlans() {
+  plans = (await api("api/plans")).plans;
+  plans.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  renderPlans();
+}
+
+function groupByAisle(lines) {
+  const groups = new Map();
+  for (const line of lines) {
+    const aisle = line.location?.aisle ? line.location.aisle : "";
+    if (!groups.has(aisle)) groups.set(aisle, []);
+    groups.get(aisle).push(line);
+  }
+  return [...groups.entries()].sort(([a], [b]) => {
+    if (a === "" || b === "") return a === "" ? 1 : -1;
+    return Number(a) - Number(b) || a.localeCompare(b);
+  });
+}
+
+function showPlan(id) {
+  const plan = plans.find((p) => p.id === id);
+  if (!plan) return;
+  tab = "plans";
+  show("plan-detail-view");
+  const view = $("plan-detail-view");
+  const checked = new Set(plan.checked);
+  const progress = el("span", { class: "meta" });
+  const allLines = [...plan.toBuy.lines, ...plan.pantry.lines];
+  const updateProgress = () => {
+    progress.textContent = `${checked.size} of ${allLines.length} ticked`;
+  };
+
+  const persist = async () => {
+    try {
+      const updated = await api(`api/plans/${encodeURIComponent(id)}/checked`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ checked: [...checked] }),
+      });
+      plans = plans.map((p) => (p.id === id ? updated : p));
+    } catch (error) {
+      progress.textContent = `Could not save: ${error.message}`;
+    }
+  };
+
+  const lineRow = (line) => {
+    const box = el("input", { type: "checkbox" });
+    box.checked = checked.has(line.productId);
+    const row = el("label", { class: box.checked ? "line done" : "line" },
+      box,
+      el("span", { class: "text" },
+        `${line.packages} × ${line.product}`,
+        el("div", { class: "meta" }, `${line.ingredient}: need ${line.needed}`),
+      ),
+      el("span", { class: "price" }, euro(line.cost)),
+    );
+    box.addEventListener("change", () => {
+      if (box.checked) checked.add(line.productId);
+      else checked.delete(line.productId);
+      row.classList.toggle("done", box.checked);
+      updateProgress();
+      persist();
+    });
+    return row;
+  };
+
+  const listSection = (title, list) => {
+    if (list.lines.length === 0) return null;
+    return el("div", {},
+      el("h3", {}, `${title} · ${euro(list.total)}`),
+      groupByAisle(list.lines).map(([aisle, lines]) =>
+        el("div", {},
+          el("div", { class: "aisle" }, aisle ? `Aisle ${aisle}` : "Aisle unknown"),
+          lines.map(lineRow),
+        ),
+      ),
+    );
+  };
+
+  const meals = plan.meals.map((meal) => {
+    const n = meal.nutrition;
+    const info = [
+      `${meal.servings} servings`,
+      n ? `${Math.round(n.kcal)} kcal · ${Math.round(n.proteinG)} g protein` : null,
+    ].filter(Boolean).join(" · ");
+    const known = meal.recipe && recipes.some((r) => r.id === meal.recipe);
+    return el("li", {},
+      el("strong", {}, meal.name),
+      " ",
+      meal.protein ? el("span", { class: "chip" }, PROTEIN_LABEL[meal.protein]) : null,
+      meal.vegetables ? el("span", { class: "chip" }, "Vegetables") : null,
+      el("div", { class: "meta" }, info),
+      known ? el("button", { onclick: () => showDetail(meal.recipe) }, "View recipe") : null,
+    );
+  });
+
+  const budgetLine = plan.budget === undefined
+    ? null
+    : plan.toBuy.total <= plan.budget
+      ? el("span", { class: "stat ok" }, `${euro(plan.budget - plan.toBuy.total)} under the ${euro(plan.budget)} budget`)
+      : el("span", { class: "stat issue" }, `${euro(plan.toBuy.total - plan.budget)} over the ${euro(plan.budget)} budget`);
+  const avg = plan.nutrition.average;
+
+  view.replaceChildren(
+    el("div", { class: "row" }, el("button", { onclick: closePlan }, "← Back")),
+    el("div", { class: "detail" },
+      el("h2", {}, plan.name),
+      el("div", { class: "meta" }, `${plan.store.chain} store ${plan.store.storeId} · saved ${new Date(plan.updatedAt).toLocaleDateString()}`),
+      el("div", { class: "row" },
+        el("span", { class: "stat" }, `To buy ${euro(plan.toBuy.total)}`),
+        budgetLine,
+        el("span", { class: "stat" }, `Pantry ${euro(plan.pantry.total)}`),
+        avg ? el("span", { class: "stat" }, `Avg ${avg.kcalPerPortion} kcal · ${avg.proteinPerPortionG} g protein`) : null,
+      ),
+      plan.balance.balanced
+        ? el("div", { class: "ok" }, "Balanced week")
+        : el("div", {}, plan.balance.issues.map((issue) => el("div", { class: "issue" }, issue))),
+      el("h3", {}, "Meals"),
+      el("ul", { class: "ing" }, meals),
+      el("div", { class: "row" }, el("h3", { style: "margin:0" }, "Shopping list"), progress),
+      listSection("To buy", plan.toBuy),
+      listSection("Pantry check", plan.pantry),
+      el("div", { class: "row" },
+        el("button", { class: "danger", onclick: () => removePlan(plan) }, "Delete plan"),
+      ),
+    ),
+  );
+  updateProgress();
+  window.scrollTo(0, 0);
+}
+
+function closePlan() {
+  tab = "plans";
+  show("plans-view");
+  renderPlans();
+}
+
+async function removePlan(plan) {
+  if (!confirm(`Delete "${plan.name}"? This cannot be undone.`)) return;
+  await api(`api/plans/${encodeURIComponent(plan.id)}`, { method: "DELETE" });
+  plans = plans.filter((p) => p.id !== plan.id);
+  closePlan();
+}
+
+$("tab-recipes").addEventListener("click", closeDetail);
+$("tab-plans").addEventListener("click", async () => {
+  tab = "plans";
+  show("plans-view");
+  await loadPlans().catch((error) => {
+    $("plan-empty").classList.remove("hidden");
+    $("plan-empty").textContent = `Could not load meal plans: ${error.message}`;
+  });
+});
 
 for (const id of ["search", "tag", "protein", "sort"]) $(id).addEventListener("input", renderList);
 load().catch((error) => {

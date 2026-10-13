@@ -3,6 +3,7 @@ import * as z from "zod/v4";
 import { assessBalance, type PlannedMeal, summarizeNutrition } from "../balance.ts";
 import { getProductAllergens, matchAvoidTerms } from "../browser/s-kaupat-allergens.ts";
 import { getProductLocation } from "../browser/s-kaupat-location.ts";
+import { type PlanSnapshot, savePlan } from "../plan-book.ts";
 import { choosePack, formatAmount, mergeIngredients } from "../planner.ts";
 import { findRecipe, scaleRecipe } from "../recipe-book.ts";
 import {
@@ -45,7 +46,7 @@ function round2(n: number): number {
 	return Math.round(n * 100) / 100;
 }
 
-type ResolvedMeal = Omit<PlannedMeal, "name"> & { ingredients: Ingredient[] };
+type ResolvedMeal = Omit<PlannedMeal, "name"> & { ingredients: Ingredient[]; recipeId?: string };
 
 // Explicit fields on the meal override what the saved recipe says
 async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
@@ -59,6 +60,7 @@ async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
 		return {
 			...base,
 			ingredients: scaleRecipe(recipe, meal.servings).ingredients,
+			recipeId: recipe.id,
 			...(protein && { protein }),
 			...(vegetables !== undefined && { vegetables }),
 			...(nutrition && { nutrition }),
@@ -118,6 +120,14 @@ export function registerMealPlanTool(server: McpServer): void {
 					.optional()
 					.default(false)
 					.describe("S-Kaupat only: add the aisle for each chosen product"),
+				saveAs: z
+					.string()
+					.min(1)
+					.max(120)
+					.optional()
+					.describe(
+						"Save the finished plan under this name so it appears in the Meal plans panel (shopping list with tick boxes, meals, totals). Only pass it on the final call, once budget, waste and balance are fine. Using the same name replaces the earlier plan.",
+					),
 				requireProteins: z
 					.array(z.enum(PROTEIN_CATEGORIES))
 					.optional()
@@ -145,6 +155,7 @@ export function registerMealPlanTool(server: McpServer): void {
 			preference,
 			avoidAllergens,
 			includeLocation,
+			saveAs,
 			requireProteins,
 			maxRedMeatMeals,
 			minProteinPerPortionG,
@@ -322,8 +333,33 @@ export function registerMealPlanTool(server: McpServer): void {
 				note: "Totals are whole packs. leftoverValue prices the unused part at the product's unit price. no_match on allergens is not a safety guarantee: check labels.",
 			};
 
+			let saved: { id: string; name: string; replaced: boolean } | undefined;
+			if (saveAs) {
+				const snapshot: PlanSnapshot = {
+					store: output.store,
+					...(budget !== undefined && { budget }),
+					meals: resolvedMeals.map(({ ingredients: _ingredients, recipeId, ...meal }) => ({
+						...meal,
+						...(recipeId && { recipe: recipeId }),
+					})),
+					toBuy: output.toBuy,
+					pantry: output.pantry,
+					balance: output.balance,
+					nutrition: output.nutrition,
+					waste: { leftoverValue: output.waste.leftoverValue },
+					pooling: { saved: output.pooling.saved },
+				};
+				const { plan, replaced } = await savePlan(saveAs, snapshot);
+				saved = { id: plan.id, name: plan.name, replaced };
+			}
+
 			return {
-				content: [{ type: "text" as const, text: JSON.stringify(output, null, 2) }],
+				content: [
+					{
+						type: "text" as const,
+						text: JSON.stringify({ ...output, ...(saved && { saved }) }, null, 2),
+					},
+				],
 			};
 		},
 	);

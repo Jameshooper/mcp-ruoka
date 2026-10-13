@@ -19,6 +19,7 @@ import { warmup as warmupSKaupat } from "./browser/s-kaupat.ts";
 import { getPage } from "./browser/session.ts";
 import { logger } from "./logger.ts";
 import { registerMealPlanTool } from "./tools/meal-plan.ts";
+import { registerPlanBookTools } from "./tools/plan-book.ts";
 import { registerRecipeTool } from "./tools/recipe.ts";
 import { registerRecipeBookTools } from "./tools/recipe-book.ts";
 import { registerSearchTool } from "./tools/search.ts";
@@ -39,6 +40,7 @@ function createServer(): McpServer {
 	registerRecipeTool(server);
 	registerRecipeBookTools(server);
 	registerMealPlanTool(server);
+	registerPlanBookTools(server);
 	return server;
 }
 
