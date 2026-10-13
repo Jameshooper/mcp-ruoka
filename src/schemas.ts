@@ -27,3 +27,32 @@ export const IngredientSchema = z.object({
 });
 
 export type Ingredient = z.infer<typeof IngredientSchema>;
+
+export const PROTEIN_CATEGORIES = [
+	"white_meat",
+	"red_meat",
+	"fish",
+	"vegetarian",
+	"other",
+] as const;
+
+export const ProteinSchema = z
+	.enum(PROTEIN_CATEGORIES)
+	.describe(
+		"Main protein of the meal: white_meat (chicken, turkey), red_meat (beef, pork, lamb, game, sausage), fish (fish and seafood), vegetarian (egg, dairy, legumes, tofu) or other",
+	);
+
+export type Protein = z.infer<typeof ProteinSchema>;
+
+export const NutritionSchema = z
+	.object({
+		kcal: z.number().positive().max(5000),
+		proteinG: z.number().nonnegative().max(500),
+		carbsG: z.number().nonnegative().max(1000).optional(),
+		fatG: z.number().nonnegative().max(500).optional(),
+	})
+	.describe(
+		"Nutrition PER PORTION (not per recipe), estimated from the ingredients: kcal and grams of protein, optionally carbs and fat",
+	);
+
+export type Nutrition = z.infer<typeof NutritionSchema>;

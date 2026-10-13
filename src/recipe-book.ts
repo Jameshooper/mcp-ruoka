@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as z from "zod/v4";
-import { IngredientSchema } from "./schemas.ts";
+import { IngredientSchema, NutritionSchema, ProteinSchema } from "./schemas.ts";
 
 export const RecipeInputSchema = z.object({
 	name: z.string().min(1).max(120),
@@ -10,6 +10,12 @@ export const RecipeInputSchema = z.object({
 	ingredients: z.array(IngredientSchema).min(1).max(40),
 	steps: z.array(z.string().min(1)).max(40).default([]),
 	tags: z.array(z.string().min(1).max(40)).max(10).default([]),
+	protein: ProteinSchema.optional(),
+	vegetables: z
+		.boolean()
+		.optional()
+		.describe("True when the meal includes vegetables or a salad (in the dish or as a side)"),
+	nutrition: NutritionSchema.optional(),
 	notes: z.string().max(2000).optional(),
 });
 

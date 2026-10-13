@@ -111,3 +111,46 @@ test("an unknown recipe is reported, not guessed", async () => {
 	});
 	expect((res as { isError?: boolean }).isError).toBe(true);
 });
+
+test("balance and nutrition come from recipe tags and inline overrides", async () => {
+	const client = await connect();
+	await client.callTool({
+		name: "save_recipe",
+		arguments: {
+			name: "Salmon bake",
+			servings: 2,
+			protein: "fish",
+			vegetables: true,
+			nutrition: { kcal: 620, proteinG: 38 },
+			ingredients: [{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" } }],
+		},
+	});
+	const out = parse(
+		await client.callTool({
+			name: "plan_meals",
+			arguments: {
+				chain: "s-kaupat",
+				storeId: "1",
+				meals: [
+					{ name: "Mon", recipe: "salmon-bake", servings: 2 },
+					{
+						name: "Tue",
+						servings: 2,
+						protein: "white_meat",
+						vegetables: false,
+						nutrition: { kcal: 700, proteinG: 45 },
+						ingredients: [
+							{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" } },
+						],
+					},
+				],
+			},
+		}),
+	);
+	expect(out.balance.balanced).toBe(false);
+	expect(out.balance.counts.fish).toBe(1);
+	// two meals cannot cover three categories, so only the missing vegetables are reported
+	expect(out.balance.issues).toHaveLength(1);
+	expect(out.balance.issues[0]).toContain("Tue");
+	expect(out.nutrition.average).toEqual({ kcalPerPortion: 660, proteinPerPortionG: 41.5 });
+});

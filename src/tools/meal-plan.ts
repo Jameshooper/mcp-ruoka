@@ -1,10 +1,17 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
+import { assessBalance, type PlannedMeal, summarizeNutrition } from "../balance.ts";
 import { getProductAllergens, matchAvoidTerms } from "../browser/s-kaupat-allergens.ts";
 import { getProductLocation } from "../browser/s-kaupat-location.ts";
 import { choosePack, formatAmount, mergeIngredients } from "../planner.ts";
 import { findRecipe, scaleRecipe } from "../recipe-book.ts";
-import { type Ingredient, IngredientSchema } from "../schemas.ts";
+import {
+	type Ingredient,
+	IngredientSchema,
+	NutritionSchema,
+	PROTEIN_CATEGORIES,
+	ProteinSchema,
+} from "../schemas.ts";
 import type { Product, ProductLocation } from "../types.ts";
 import { CALL_BUDGET_MS, mapPool, resolveIngredient } from "./recipe.ts";
 
@@ -22,6 +29,14 @@ const MealSchema = z.object({
 		.describe(
 			"Instead of `recipe`: the meal's ingredients with quantities already totalled for `servings`",
 		),
+	protein: ProteinSchema.optional().describe(
+		"Main protein of an inline meal (a saved recipe brings its own); needed for the balance check",
+	),
+	vegetables: z
+		.boolean()
+		.optional()
+		.describe("True if the meal includes vegetables or a salad; a saved recipe brings its own"),
+	nutrition: NutritionSchema.optional(),
 });
 
 type Meal = z.infer<typeof MealSchema>;
@@ -30,13 +45,34 @@ function round2(n: number): number {
 	return Math.round(n * 100) / 100;
 }
 
-async function mealIngredients(meal: Meal): Promise<Ingredient[] | string> {
+type ResolvedMeal = Omit<PlannedMeal, "name"> & { ingredients: Ingredient[] };
+
+// Explicit fields on the meal override what the saved recipe says
+async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
+	const base = { servings: meal.servings };
 	if (meal.recipe) {
 		const recipe = await findRecipe(meal.recipe);
 		if (!recipe) return `No saved recipe matches "${meal.recipe}"`;
-		return scaleRecipe(recipe, meal.servings).ingredients;
+		const protein = meal.protein ?? recipe.protein;
+		const vegetables = meal.vegetables ?? recipe.vegetables;
+		const nutrition = meal.nutrition ?? recipe.nutrition;
+		return {
+			...base,
+			ingredients: scaleRecipe(recipe, meal.servings).ingredients,
+			...(protein && { protein }),
+			...(vegetables !== undefined && { vegetables }),
+			...(nutrition && { nutrition }),
+		};
 	}
-	if (meal.ingredients && meal.ingredients.length > 0) return meal.ingredients;
+	if (meal.ingredients && meal.ingredients.length > 0) {
+		return {
+			...base,
+			ingredients: meal.ingredients,
+			...(meal.protein && { protein: meal.protein }),
+			...(meal.vegetables !== undefined && { vegetables: meal.vegetables }),
+			...(meal.nutrition && { nutrition: meal.nutrition }),
+		};
+	}
 	return "Give either a saved `recipe` or `ingredients`";
 }
 
@@ -57,7 +93,7 @@ export function registerMealPlanTool(server: McpServer): void {
 		"plan_meals",
 		{
 			description:
-				"Price a whole week's meals at one store as a single shopping list, to plan within a budget and cut food waste. Needs from every meal are pooled per ingredient, so one bag of carrots can serve several dinners; for each ingredient the tool picks the pack combination that covers the total, and reports what is left over and what it is worth. It also reports how much pooling saved compared to buying for each meal separately. You design the menu: call this, then read `wasteAlerts` (leftovers worth using up), `costDrivers` and the budget result, swap or add meals so leftovers get used (e.g. put leftover carrots into another dish), and call it again until the plan fits. Meals come from saved recipes (`recipe`) or inline `ingredients`. Mark staples with pantry: true; the budget covers only items to buy. Pass avoidAllergens to keep flagged products out. Prices are for the chosen store's online selection; stock is not exposed.",
+				"Price a whole week's meals at one store as a single shopping list, to plan within a budget and cut food waste. Needs from every meal are pooled per ingredient, so one bag of carrots can serve several dinners; for each ingredient the tool picks the pack combination that covers the total, and reports what is left over and what it is worth. It also reports how much pooling saved compared to buying for each meal separately. You design the menu: call this, then read `wasteAlerts` (leftovers worth using up), `costDrivers` and the budget result, swap or add meals so leftovers get used (e.g. put leftover carrots into another dish), and call it again until the plan fits. Meals come from saved recipes (`recipe`) or inline `ingredients`. Mark staples with pantry: true; the budget covers only items to buy. The plan must also be balanced: every meal needs a protein type (white_meat, red_meat, fish, vegetarian) and vegetables or a salad, and the week should include white meat, red meat and fish with red meat kept in check. Saved recipes carry these tags; for inline meals set `protein` and `vegetables`. Read `balance.issues` and fix them (swap meals, add a salad) together with the budget and waste alerts, then call again until `balance.balanced` is true. `nutrition` reports per-portion calories and protein from the recipes' estimates. Pass avoidAllergens to keep flagged products out. Prices are for the chosen store's online selection; stock is not exposed.",
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]),
 				storeId: z.string().min(1).describe("Store ID from get_stores"),
@@ -82,13 +118,41 @@ export function registerMealPlanTool(server: McpServer): void {
 					.optional()
 					.default(false)
 					.describe("S-Kaupat only: add the aisle for each chosen product"),
+				requireProteins: z
+					.array(z.enum(PROTEIN_CATEGORIES))
+					.optional()
+					.default(["white_meat", "red_meat", "fish"])
+					.describe("Protein types the week must include (default: white meat, red meat and fish)"),
+				maxRedMeatMeals: z
+					.number()
+					.int()
+					.nonnegative()
+					.optional()
+					.default(2)
+					.describe("Most red meat meals allowed in the plan (default 2)"),
+				minProteinPerPortionG: z
+					.number()
+					.positive()
+					.optional()
+					.describe("Flag meals with less protein per portion than this"),
 			}),
 		},
-		async ({ chain, storeId, meals, budget, preference, avoidAllergens, includeLocation }) => {
+		async ({
+			chain,
+			storeId,
+			meals,
+			budget,
+			preference,
+			avoidAllergens,
+			includeLocation,
+			requireProteins,
+			maxRedMeatMeals,
+			minProteinPerPortionG,
+		}) => {
 			const deadline = Date.now() + CALL_BUDGET_MS;
 
 			const resolved = await Promise.all(
-				meals.map(async (meal) => ({ meal, content: await mealIngredients(meal) })),
+				meals.map(async (meal) => ({ meal, content: await resolveMeal(meal) })),
 			);
 			const problems = resolved.flatMap(({ meal, content }) =>
 				typeof content === "string" ? [{ meal: meal.name, problem: content }] : [],
@@ -99,9 +163,10 @@ export function registerMealPlanTool(server: McpServer): void {
 					content: [{ type: "text" as const, text: JSON.stringify({ problems }, null, 2) }],
 				};
 			}
-			const inputs = resolved.flatMap(({ meal, content }) =>
-				typeof content === "string" ? [] : [{ meal: meal.name, ingredients: content }],
+			const resolvedMeals = resolved.flatMap(({ meal, content }) =>
+				typeof content === "string" ? [] : [{ name: meal.name, ...content }],
 			);
+			const inputs = resolvedMeals.map((m) => ({ meal: m.name, ingredients: m.ingredients }));
 
 			const { merged, unquantified } = mergeIngredients(inputs);
 			const searched = await mapPool(merged, chain === "s-kaupat" ? 4 : 1, (item) =>
@@ -245,6 +310,12 @@ export function registerMealPlanTool(server: McpServer): void {
 					saved: round2(separateTotal - buyTotal),
 				},
 				waste: { leftoverValue: wasteValue, alerts: wasteAlerts },
+				balance: assessBalance(resolvedMeals, {
+					requireProteins,
+					maxRedMeatMeals,
+					...(minProteinPerPortionG !== undefined && { minProteinG: minProteinPerPortionG }),
+				}),
+				nutrition: summarizeNutrition(resolvedMeals),
 				costDrivers,
 				...(missing.length > 0 && { missing }),
 				...(unquantified.length > 0 && { unquantified }),

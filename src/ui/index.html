@@ -59,6 +59,14 @@ textarea { width: 100%; min-height: 70px; }
     <div class="toolbar">
       <input type="search" id="search" placeholder="Search name, ingredient or tag">
       <select id="tag"><option value="">All tags</option></select>
+      <select id="protein">
+        <option value="">Any protein</option>
+        <option value="white_meat">White meat</option>
+        <option value="red_meat">Red meat</option>
+        <option value="fish">Fish</option>
+        <option value="vegetarian">Vegetarian</option>
+        <option value="other">Other</option>
+      </select>
       <select id="sort">
         <option value="rating">Best rated</option>
         <option value="name">Name</option>
@@ -102,7 +110,21 @@ function staticStars(rating) {
   return wrap;
 }
 
-function matches(recipe, query, tag) {
+const PROTEIN_LABEL = {
+  white_meat: "White meat",
+  red_meat: "Red meat",
+  fish: "Fish",
+  vegetarian: "Vegetarian",
+  other: "Other",
+};
+
+function nutritionText(recipe) {
+  const n = recipe.nutrition;
+  return n ? `${Math.round(n.kcal)} kcal · ${Math.round(n.proteinG)} g protein / portion` : "";
+}
+
+function matches(recipe, query, tag, protein) {
+  if (protein && recipe.protein !== protein) return false;
   if (tag && !recipe.tags.some((t) => t.toLowerCase() === tag)) return false;
   if (!query) return true;
   const haystack = [recipe.name, ...recipe.tags, ...recipe.ingredients.flatMap((i) => [i.english, ...i.finnish])]
@@ -119,10 +141,21 @@ function sorted(list, mode) {
   return copy;
 }
 
+function badges(recipe) {
+  const items = [];
+  if (recipe.protein) items.push(PROTEIN_LABEL[recipe.protein]);
+  if (recipe.vegetables) items.push("Vegetables");
+  items.push(...recipe.tags);
+  return items.map((t) => el("span", { class: "chip" }, t));
+}
+
 function renderList() {
   const query = $("search").value.trim().toLowerCase();
   const tag = $("tag").value;
-  const shown = sorted(recipes.filter((r) => matches(r, query, tag)), $("sort").value);
+  const shown = sorted(
+    recipes.filter((r) => matches(r, query, tag, $("protein").value)),
+    $("sort").value,
+  );
   const grid = $("grid");
   grid.replaceChildren(
     ...shown.map((r) =>
@@ -130,7 +163,8 @@ function renderList() {
         el("h2", {}, r.name),
         staticStars(r.rating),
         el("div", { class: "meta" }, `${r.servings} servings · ${r.ingredients.length} ingredients`),
-        el("div", { class: "chips" }, r.tags.map((t) => el("span", { class: "chip" }, t))),
+        el("div", { class: "meta" }, nutritionText(r)),
+        el("div", { class: "chips" }, badges(r)),
       ),
     ),
   );
@@ -218,7 +252,8 @@ async function showDetail(id) {
     el("div", { class: "row" }, el("button", { onclick: closeDetail }, "← Back")),
     el("div", { class: "detail" },
       el("h2", {}, recipe.name),
-      el("div", { class: "chips" }, recipe.tags.map((t) => el("span", { class: "chip" }, t))),
+      el("div", { class: "chips" }, badges(recipe)),
+      el("div", { class: "meta" }, nutritionText(recipe)),
       el("div", { class: "row" }, stars, status),
       el("div", { class: "row" }, el("label", {}, "Servings "), servings),
       el("h3", {}, "Ingredients"), ingredients,
@@ -251,7 +286,7 @@ async function remove(recipe) {
   closeDetail();
 }
 
-for (const id of ["search", "tag", "sort"]) $(id).addEventListener("input", renderList);
+for (const id of ["search", "tag", "protein", "sort"]) $(id).addEventListener("input", renderList);
 load().catch((error) => {
   const empty = $("empty");
   empty.classList.remove("hidden");
