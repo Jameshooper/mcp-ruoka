@@ -2,7 +2,12 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as z from "zod/v4";
-import { IngredientSchema, NutritionSchema, ProteinSchema } from "./schemas.ts";
+import {
+	IngredientSchema,
+	NutritionSchema,
+	ProteinSchema,
+	StoredNutritionSchema,
+} from "./schemas.ts";
 
 export const RecipeInputSchema = z.object({
 	name: z.string().min(1).max(120),
@@ -21,6 +26,7 @@ export const RecipeInputSchema = z.object({
 
 const RecipeSchema = RecipeInputSchema.extend({
 	id: z.string().min(1),
+	nutrition: StoredNutritionSchema.optional(),
 	rating: z.number().int().min(1).max(5).optional(),
 	review: z.string().max(2000).optional(),
 	createdAt: z.string(),

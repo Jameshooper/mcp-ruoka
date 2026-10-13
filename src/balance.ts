@@ -1,11 +1,16 @@
-import type { Nutrition, Protein } from "./schemas.ts";
+import type { Protein } from "./schemas.ts";
+
+export interface MealNutrition {
+	kcal: number;
+	proteinG: number;
+}
 
 export interface PlannedMeal {
 	name: string;
 	servings: number;
 	protein?: Protein;
 	vegetables?: boolean;
-	nutrition?: Nutrition;
+	nutrition?: MealNutrition;
 }
 
 export interface BalanceOptions {

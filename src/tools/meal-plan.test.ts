@@ -121,7 +121,7 @@ test("balance and nutrition come from recipe tags and inline overrides", async (
 			servings: 2,
 			protein: "fish",
 			vegetables: true,
-			nutrition: { kcal: 620, proteinG: 38 },
+			nutrition: { kcal: 620, proteinG: 38, carbsG: 55, fatG: 22 },
 			ingredients: [{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" } }],
 		},
 	});
@@ -138,7 +138,7 @@ test("balance and nutrition come from recipe tags and inline overrides", async (
 						servings: 2,
 						protein: "white_meat",
 						vegetables: false,
-						nutrition: { kcal: 700, proteinG: 45 },
+						nutrition: { kcal: 700, proteinG: 45, carbsG: 60, fatG: 25 },
 						ingredients: [
 							{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" } },
 						],

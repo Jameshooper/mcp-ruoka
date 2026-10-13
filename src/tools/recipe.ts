@@ -2,8 +2,10 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { getProductAllergens, matchAvoidTerms } from "../browser/s-kaupat-allergens.ts";
 import { getProductLocation } from "../browser/s-kaupat-location.ts";
+import { getProductNutrition } from "../browser/s-kaupat-nutrition.ts";
 import { type CostResult, type CostTotals, costProduct, sumCosts } from "../costing.ts";
 import { logger } from "../logger.ts";
+import { type Macros, macrosFor, quantityAmount, roundMacros, sumMacros } from "../nutrition.ts";
 import { IngredientSchema } from "../schemas.ts";
 import type { Product } from "../types.ts";
 import { runSearch } from "./search.ts";
@@ -254,12 +256,105 @@ function summarizeCosts(
 	};
 }
 
+interface NutritionReport {
+	servings?: number;
+	total: Macros;
+	perPortion?: Macros;
+	ingredients: Array<{ ingredient: string; product: string; amount: string } & Macros>;
+	notCounted: Array<{ ingredient: string; reason: string }>;
+	note: string;
+}
+
+// Uses the first allergen-safe candidate that has a label table, the same product the topMatch
+// cost assumes, scaled by the amount the recipe needs
+async function nutritionReport(
+	results: IngredientResult[],
+	ingredients: Array<z.infer<typeof IngredientSchema>>,
+	storeId: string,
+	servings: number | undefined,
+	deadline: number,
+): Promise<NutritionReport> {
+	const rows: NutritionReport["ingredients"] = [];
+	const notCounted: NutritionReport["notCounted"] = [];
+
+	const work = results.map(async (result, i) => {
+		const quantity = ingredients[i]?.quantity;
+		if (!quantity)
+			return notCounted.push({ ingredient: result.english, reason: "no quantity given" });
+		const amount = quantityAmount(quantity);
+		if (!amount) {
+			return notCounted.push({
+				ingredient: result.english,
+				reason: "quantity in pieces: give grams to count it",
+			});
+		}
+		const eligible = result.products.filter((p) => p.allergenCheck?.status !== "flagged");
+		for (const product of eligible.slice(0, 3)) {
+			const nutrition = await getProductNutrition(product.id, storeId);
+			if (nutrition.per100) {
+				rows.push({
+					ingredient: result.english,
+					product: product.name,
+					amount: `${Math.round(amount.amount)} ${amount.basis}`,
+					...roundMacros(macrosFor(nutrition.per100, amount.amount)),
+				});
+				return;
+			}
+		}
+		notCounted.push({
+			ingredient: result.english,
+			reason: eligible.length === 0 ? "no product found" : "no nutrition table on the candidates",
+		});
+	});
+
+	let finished = false;
+	await Promise.race([
+		Promise.all(work).then(() => {
+			finished = true;
+		}),
+		new Promise<void>((resolve) => setTimeout(resolve, Math.max(deadline - Date.now(), 1_000))),
+	]);
+	if (!finished) {
+		const seen = new Set([
+			...rows.map((r) => r.ingredient),
+			...notCounted.map((r) => r.ingredient),
+		]);
+		for (const result of results) {
+			if (!seen.has(result.english)) {
+				notCounted.push({ ingredient: result.english, reason: "still loading: repeat the call" });
+			}
+		}
+	}
+
+	// Lookups finish in any order; report in the recipe's order
+	const position = (name: string) => results.findIndex((r) => r.english === name);
+	rows.sort((x, y) => position(x.ingredient) - position(y.ingredient));
+	notCounted.sort((x, y) => position(x.ingredient) - position(y.ingredient));
+
+	const total = sumMacros(rows);
+	return {
+		...(servings && { servings }),
+		total: roundMacros(total),
+		...(servings && {
+			perPortion: roundMacros({
+				kcal: total.kcal / servings,
+				proteinG: total.proteinG / servings,
+				carbsG: total.carbsG / servings,
+				fatG: total.fatG / servings,
+			}),
+		}),
+		ingredients: rows,
+		notCounted,
+		note: "Calculated from the store's per-100 g/ml label values for the raw amounts in the recipe (millilitres are treated as grams). Ingredients in notCounted are missing, so the totals are a lower bound until they are added; pass these figures to save_recipe with source store_data.",
+	};
+}
+
 export function registerRecipeTool(server: McpServer): void {
 	server.registerTool(
 		"find_recipe_ingredients",
 		{
 			description:
-				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. Mark staples the cook likely already owns (oil, salt, sugar, common dried spices) with pantry: true; they are still looked up and priced, but returned with pantry: true and costed separately in pantryCost, while cost covers only what must be bought, so present two lists and two totals. Give each ingredient's total quantity (scaled for the number of servings) and the servings count to also get costs: per product the packs needed and basket vs used cost, and recipe totals including per person. Pass avoidAllergens (Finnish and English terms) to check every candidate's declared allergens and ingredients and keep flagged ones out of the cost totals. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock is not exposed. With includeLocation (S-Kaupat only) the top candidate(s) per ingredient also get their in-store aisle and floor. Each carries locationStatus: found, none (the store lists no aisle), unknown (lookup failed) or pending (still loading when the call's time budget ran out: repeat the same call shortly and it will be answered from cache).",
+				"Check a recipe's ingredients against one K-Ruoka or S-Kaupat store. You (the caller) translate each English ingredient into Finnish store terms; this tool searches each ingredient's terms in order against the store's selection and reports the first term that matches, with candidate products and prices. Mark staples the cook likely already owns (oil, salt, sugar, common dried spices) with pantry: true; they are still looked up and priced, but returned with pantry: true and costed separately in pantryCost, while cost covers only what must be bought, so present two lists and two totals. Give each ingredient's total quantity (scaled for the number of servings) and the servings count to also get costs: per product the packs needed and basket vs used cost, and recipe totals including per person. Pass avoidAllergens (Finnish and English terms) to check every candidate's declared allergens and ingredients and keep flagged ones out of the cost totals. To pick the store for a requested location, call get_stores with the city first. A product appearing here means it is in that store's selection as listed on the chain's site; real-time shelf stock is not exposed. With includeNutrition (S-Kaupat only) it also calculates the recipe's calories, protein, carbs and fat per portion from the store's nutrition labels, which is more accurate than estimating: use those figures when saving the recipe. With includeLocation (S-Kaupat only) the top candidate(s) per ingredient also get their in-store aisle and floor. Each carries locationStatus: found, none (the store lists no aisle), unknown (lookup failed) or pending (still loading when the call's time budget ran out: repeat the same call shortly and it will be answered from cache).",
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]).describe("Which chain's store to check"),
 				storeId: z.string().min(1).describe("Store ID from get_stores"),
@@ -283,6 +378,13 @@ export function registerRecipeTool(server: McpServer): void {
 					.default(false)
 					.describe(
 						"S-Kaupat only: also look up the aisle ('Hyllyväli') and floor in the store for the top candidates of each ingredient.",
+					),
+				includeNutrition: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						"S-Kaupat only: calculate calories, protein, carbs and fat for the recipe (total and per portion) from the store's nutrition labels. Needs quantities, ideally in grams, for every ingredient including pantry staples.",
 					),
 				locationForTopN: z
 					.number()
@@ -312,6 +414,7 @@ export function registerRecipeTool(server: McpServer): void {
 			avoidAllergens,
 			limitPerIngredient,
 			includeLocation,
+			includeNutrition,
 			locationForTopN,
 		}) => {
 			const deadline = Date.now() + CALL_BUDGET_MS;
@@ -349,6 +452,10 @@ export function registerRecipeTool(server: McpServer): void {
 				if (!quantity) continue;
 				for (const product of result.products) product.costing = costProduct(product, quantity);
 			}
+			const nutrition =
+				chain === "s-kaupat" && includeNutrition
+					? await nutritionReport(results, ingredients, storeId, servings, deadline)
+					: null;
 			const cost = summarizeCosts(results, ingredients, servings, false);
 			const pantryCost = summarizeCosts(results, ingredients, servings, true);
 
@@ -379,7 +486,13 @@ export function registerRecipeTool(server: McpServer): void {
 					{
 						type: "text" as const,
 						text: JSON.stringify(
-							{ summary, ...(cost && { cost }), ...(pantryCost && { pantryCost }), results },
+							{
+								summary,
+								...(cost && { cost }),
+								...(pantryCost && { pantryCost }),
+								...(nutrition && { nutrition }),
+								results,
+							},
 							null,
 							2,
 						),

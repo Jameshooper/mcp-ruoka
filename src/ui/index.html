@@ -120,7 +120,11 @@ const PROTEIN_LABEL = {
 
 function nutritionText(recipe) {
   const n = recipe.nutrition;
-  return n ? `${Math.round(n.kcal)} kcal · ${Math.round(n.proteinG)} g protein / portion` : "";
+  if (!n) return "";
+  const macros = n.carbsG !== undefined && n.fatG !== undefined
+    ? ` · ${Math.round(n.carbsG)} g carbs · ${Math.round(n.fatG)} g fat`
+    : "";
+  return `${Math.round(n.kcal)} kcal · ${Math.round(n.proteinG)} g protein${macros} / portion`;
 }
 
 function matches(recipe, query, tag, protein) {

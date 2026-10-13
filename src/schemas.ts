@@ -48,11 +48,21 @@ export const NutritionSchema = z
 	.object({
 		kcal: z.number().positive().max(5000),
 		proteinG: z.number().nonnegative().max(500),
-		carbsG: z.number().nonnegative().max(1000).optional(),
-		fatG: z.number().nonnegative().max(500).optional(),
+		carbsG: z.number().nonnegative().max(1000),
+		fatG: z.number().nonnegative().max(500),
+		source: z
+			.enum(["store_data", "estimate"])
+			.optional()
+			.describe("store_data when calculated from the store's nutrition labels, otherwise estimate"),
 	})
 	.describe(
-		"Nutrition PER PORTION (not per recipe), estimated from the ingredients: kcal and grams of protein, optionally carbs and fat",
+		"Nutrition PER PORTION (not per recipe): kcal, protein, carbs and fat in grams. Always give all four. Prefer the figures calculated by find_recipe_ingredients (includeNutrition) from the store's labels; estimate from the ingredients only when those are unavailable",
 	);
+
+// Recipes saved before carbs and fat were required stay readable
+export const StoredNutritionSchema = NutritionSchema.extend({
+	carbsG: z.number().nonnegative().max(1000).optional(),
+	fatG: z.number().nonnegative().max(500).optional(),
+});
 
 export type Nutrition = z.infer<typeof NutritionSchema>;
