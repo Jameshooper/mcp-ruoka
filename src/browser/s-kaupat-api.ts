@@ -60,29 +60,4 @@ export async function fetchProductFields(
 	}
 }
 
-// Shared by the product lookups: answers are reused for a while and identical concurrent
-// lookups share one request. Results that are not worth keeping (failures) are retried next time.
-export function memoizedLookup<T>(
-	ttlMs: number,
-	shouldCache: (value: T) => boolean,
-): (key: string, produce: () => Promise<T>) => Promise<T> {
-	const cache = new Map<string, { value: T; expiresAt: number }>();
-	const inflight = new Map<string, Promise<T>>();
-
-	return (key, produce) => {
-		const cached = cache.get(key);
-		if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.value);
-
-		const running = inflight.get(key);
-		if (running) return running;
-
-		const promise = produce()
-			.then((value) => {
-				if (shouldCache(value)) cache.set(key, { value, expiresAt: Date.now() + ttlMs });
-				return value;
-			})
-			.finally(() => inflight.delete(key));
-		inflight.set(key, promise);
-		return promise;
-	};
-}
+export { memoizedLookup } from "./http-retry.ts";

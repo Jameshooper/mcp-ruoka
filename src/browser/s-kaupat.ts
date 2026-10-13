@@ -1,7 +1,7 @@
 import * as z from "zod/v4";
 import { logger } from "../logger.ts";
 import type { Product, SearchResult, Store } from "../types.ts";
-import { fetchWithRetry } from "./http-retry.ts";
+import { fetchWithRetry, memoizedLookup } from "./http-retry.ts";
 import { getContext } from "./session.ts";
 
 export const ORIGIN = "https://www.s-kaupat.fi";
@@ -233,7 +233,7 @@ async function fetchProducts(
 	return response.json();
 }
 
-export async function searchProducts(
+async function searchProductsUncached(
 	query: string,
 	storeId: string,
 	limit: number,
@@ -274,6 +274,20 @@ export async function searchProducts(
 		storeId,
 		chain: "s-kaupat",
 	};
+}
+
+// A week's plan searches the same staples again and again; prices and listings move slowly
+// enough that an hour-old answer is fine, and it keeps the request count (and CDN blocks) down
+const searchCache = memoizedLookup<SearchResult>(60 * 60_000, (r) => r.products.length > 0);
+
+export function searchProducts(
+	query: string,
+	storeId: string,
+	limit: number,
+): Promise<SearchResult> {
+	return searchCache(`${storeId}|${query.trim().toLowerCase()}|${limit}`, () =>
+		searchProductsUncached(query, storeId, limit),
+	);
 }
 
 const StoreSearchStoreSchema = z.object({
