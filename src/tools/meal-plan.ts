@@ -3,8 +3,25 @@ import * as z from "zod/v4";
 import { assessBalance, type PlannedMeal, summarizeNutrition } from "../balance.ts";
 import { getProductAllergens, matchAvoidTerms } from "../browser/s-kaupat-allergens.ts";
 import { getProductLocation } from "../browser/s-kaupat-location.ts";
+import { getProductNutrition } from "../browser/s-kaupat-nutrition.ts";
+import { toBase } from "../costing.ts";
+import {
+	type Macros,
+	macrosFor,
+	type Per100,
+	quantityAmount,
+	roundMacros,
+	sumMacros,
+} from "../nutrition.ts";
 import { type PlanSnapshot, savePlan } from "../plan-book.ts";
-import { choosePack, formatAmount, mergeIngredients } from "../planner.ts";
+import {
+	choosePack,
+	formatAmount,
+	type MergedIngredient,
+	mergeIngredients,
+	mergeKey,
+	type PackChoice,
+} from "../planner.ts";
 import { findRecipe, scaleRecipe } from "../recipe-book.ts";
 import {
 	type Ingredient,
@@ -37,7 +54,14 @@ const MealSchema = z.object({
 		.boolean()
 		.optional()
 		.describe("True if the meal includes vegetables or a salad; a saved recipe brings its own"),
-	nutrition: NutritionSchema.optional(),
+	nutrition: NutritionSchema.optional().describe(
+		"Optional override; by default calories and macros are calculated from the store's nutrition labels for the chosen products",
+	),
+	steps: z
+		.array(z.string().min(1))
+		.max(40)
+		.optional()
+		.describe("The method for an inline meal as ordered steps (a saved recipe brings its own)"),
 });
 
 type Meal = z.infer<typeof MealSchema>;
@@ -46,7 +70,11 @@ function round2(n: number): number {
 	return Math.round(n * 100) / 100;
 }
 
-type ResolvedMeal = Omit<PlannedMeal, "name"> & { ingredients: Ingredient[]; recipeId?: string };
+type ResolvedMeal = Omit<PlannedMeal, "name"> & {
+	ingredients: Ingredient[];
+	steps: string[];
+	recipeId?: string;
+};
 
 // Explicit fields on the meal override what the saved recipe says
 async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
@@ -61,6 +89,7 @@ async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
 			...base,
 			ingredients: scaleRecipe(recipe, meal.servings).ingredients,
 			recipeId: recipe.id,
+			steps: recipe.steps,
 			...(protein && { protein }),
 			...(vegetables !== undefined && { vegetables }),
 			...(nutrition && { nutrition }),
@@ -70,6 +99,7 @@ async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
 		return {
 			...base,
 			ingredients: meal.ingredients,
+			steps: meal.steps ?? [],
 			...(meal.protein && { protein: meal.protein }),
 			...(meal.vegetables !== undefined && { vegetables: meal.vegetables }),
 			...(meal.nutrition && { nutrition: meal.nutrition }),
@@ -86,12 +116,73 @@ async function shelfLocation(ean: string, storeId: string): Promise<ProductLocat
 	}
 }
 
+// Calories and macros per portion from the chosen products' label values, for meals that did not
+// bring their own figures. Pieces and products without a label cannot be counted, so such meals
+// are marked partial (a lower bound).
+async function fillMealNutrition(
+	meals: Array<ResolvedMeal & { name: string }>,
+	shopping: Array<{ item: MergedIngredient; choice: PackChoice }>,
+	chain: "k-ruoka" | "s-kaupat",
+	storeId: string,
+	deadline: number,
+): Promise<void> {
+	const targets = meals.filter((m) => !m.nutrition);
+	if (chain !== "s-kaupat" || targets.length === 0) return;
+
+	const productByKey = new Map(shopping.map((l) => [l.item.key, l.choice.product.id]));
+	const per100 = new Map<string, Per100 | null>();
+	const wanted = new Set<string>();
+	for (const meal of targets) {
+		for (const ingredient of meal.ingredients) {
+			if (!ingredient.quantity) continue;
+			const id = productByKey.get(mergeKey(ingredient, toBase(ingredient.quantity).dimension));
+			if (id) wanted.add(id);
+		}
+	}
+	await Promise.race([
+		Promise.all(
+			[...wanted].map((id) =>
+				getProductNutrition(id, storeId).then((r) => {
+					per100.set(id, r.per100);
+				}),
+			),
+		),
+		new Promise<void>((resolve) => setTimeout(resolve, Math.max(deadline - Date.now(), 1_000))),
+	]);
+
+	for (const meal of targets) {
+		const parts: Macros[] = [];
+		let quantified = 0;
+		for (const ingredient of meal.ingredients) {
+			if (!ingredient.quantity) continue;
+			quantified++;
+			const amount = quantityAmount(ingredient.quantity);
+			const id = productByKey.get(mergeKey(ingredient, toBase(ingredient.quantity).dimension));
+			const label = id ? per100.get(id) : undefined;
+			if (amount && label) parts.push(macrosFor(label, amount.amount));
+		}
+		if (parts.length === 0) continue;
+		const total = sumMacros(parts);
+		const perPortion = roundMacros({
+			kcal: total.kcal / meal.servings,
+			proteinG: total.proteinG / meal.servings,
+			carbsG: total.carbsG / meal.servings,
+			fatG: total.fatG / meal.servings,
+		});
+		meal.nutrition = {
+			...perPortion,
+			source: "store_data",
+			...(parts.length < quantified && { partial: true }),
+		};
+	}
+}
+
 export function registerMealPlanTool(server: McpServer): void {
 	server.registerTool(
 		"plan_meals",
 		{
 			description:
-				"Price a whole week's meals at one store as a single shopping list, to plan within a budget and cut food waste. Needs from every meal are pooled per ingredient, so one bag of carrots can serve several dinners; for each ingredient the tool picks the pack combination that covers the total, and reports what is left over and what it is worth. It also reports how much pooling saved compared to buying for each meal separately. You design the menu: call this, then read `wasteAlerts` (leftovers worth using up), `costDrivers` and the budget result, swap or add meals so leftovers get used (e.g. put leftover carrots into another dish), and call it again until the plan fits. Meals come from saved recipes (`recipe`) or inline `ingredients`. Mark staples with pantry: true; the budget covers only items to buy. The plan must also be balanced: every meal needs a protein type (white_meat, red_meat, fish, vegetarian) and vegetables or a salad, and the week should include white meat, red meat and fish with red meat kept in check. Saved recipes carry these tags; for inline meals set `protein` and `vegetables`. Read `balance.issues` and fix them (swap meals, add a salad) together with the budget and waste alerts, then call again until `balance.balanced` is true. `nutrition` reports per-portion calories and protein from the recipes' estimates. Pass avoidAllergens to keep flagged products out. Prices are for the chosen store's online selection; stock is not exposed.",
+				"Price a whole week's meals at one store as a single shopping list, to plan within a budget and cut food waste. Needs from every meal are pooled per ingredient, so one bag of carrots can serve several dinners; for each ingredient the tool picks the pack combination that covers the total, and reports what is left over and what it is worth. It also reports how much pooling saved compared to buying for each meal separately. You design the menu: call this, then read `wasteAlerts` (leftovers worth using up), `costDrivers` and the budget result, swap or add meals so leftovers get used (e.g. put leftover carrots into another dish), and call it again until the plan fits. Meals come from saved recipes (`recipe`) or inline `ingredients`. Mark staples with pantry: true; the budget covers only items to buy. The plan must also be balanced: every meal needs a protein type (white_meat, red_meat, fish, vegetarian) and vegetables or a salad, and the week should include white meat, red meat and fish with red meat kept in check. Saved recipes carry these tags; for inline meals set `protein` and `vegetables`. Prefer saved recipes (save_recipe first, with the method) so the method and ratings are kept; an inline meal should still pass its `steps`. Read `balance.issues` and fix them (swap meals, add a salad) together with the budget and waste alerts, then call again until `balance.balanced` is true. `nutrition` reports per-portion calories and protein from the recipes' estimates. Pass avoidAllergens to keep flagged products out. Prices are for the chosen store's online selection; stock is not exposed.",
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]),
 				storeId: z.string().min(1).describe("Store ID from get_stores"),
@@ -236,6 +327,7 @@ export function registerMealPlanTool(server: McpServer): void {
 			}
 
 			const shopping = lines.flatMap((l) => (l.choice ? [{ ...l, choice: l.choice }] : []));
+			await fillMealNutrition(resolvedMeals, shopping, chain, storeId, deadline);
 			const buy = shopping.filter((l) => !l.item.pantry);
 			const pantry = shopping.filter((l) => l.item.pantry);
 

@@ -41,6 +41,11 @@ export function baseQuantity(dimension: Dimension, value: number): Quantity {
 	return { amount: Math.round(value * 10_000) / 10_000, unit: BASE_UNIT[dimension] };
 }
 
+export function mergeKey(ingredient: Ingredient, dimension: Dimension): string {
+	const term = ingredient.finnish[0]?.trim().toLowerCase() ?? ingredient.english.toLowerCase();
+	return `${term}|${dimension}`;
+}
+
 // One shopping line per ingredient: needs from every meal are pooled so that a single pack can
 // serve several meals, which is how leftovers get used rather than thrown away
 export function mergeIngredients(meals: MealIngredients[]): {
@@ -57,8 +62,7 @@ export function mergeIngredients(meals: MealIngredients[]): {
 				continue;
 			}
 			const base = toBase(ingredient.quantity);
-			const term = ingredient.finnish[0]?.trim().toLowerCase() ?? ingredient.english.toLowerCase();
-			const key = `${term}|${base.dimension}`;
+			const key = mergeKey(ingredient, base.dimension);
 			const existing = byKey.get(key);
 			if (existing) {
 				existing.need += base.value;

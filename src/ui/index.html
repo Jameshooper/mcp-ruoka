@@ -143,7 +143,8 @@ function nutritionText(recipe) {
   const macros = n.carbsG !== undefined && n.fatG !== undefined
     ? ` · ${Math.round(n.carbsG)} g carbs · ${Math.round(n.fatG)} g fat`
     : "";
-  return `${Math.round(n.kcal)} kcal · ${Math.round(n.proteinG)} g protein${macros} / portion`;
+  const partial = n.partial ? " (some ingredients not counted)" : "";
+  return `${n.partial ? "≥ " : ""}${Math.round(n.kcal)} kcal · ${Math.round(n.proteinG)} g protein${macros} / portion${partial}`;
 }
 
 function matches(recipe, query, tag, protein) {
@@ -442,11 +443,7 @@ function showPlan(id) {
   };
 
   const meals = plan.meals.map((meal) => {
-    const n = meal.nutrition;
-    const info = [
-      `${meal.servings} servings`,
-      n ? `${Math.round(n.kcal)} kcal · ${Math.round(n.proteinG)} g protein` : null,
-    ].filter(Boolean).join(" · ");
+    const info = [`${meal.servings} servings`, nutritionText(meal) || "no nutrition data"].join(" · ");
     const known = meal.recipe && recipes.some((r) => r.id === meal.recipe);
     return el("li", {},
       el("strong", {}, meal.name),
@@ -454,6 +451,12 @@ function showPlan(id) {
       meal.protein ? el("span", { class: "chip" }, PROTEIN_LABEL[meal.protein]) : null,
       meal.vegetables ? el("span", { class: "chip" }, "Vegetables") : null,
       el("div", { class: "meta" }, info),
+      meal.steps?.length
+        ? el("details", {},
+            el("summary", {}, "Method"),
+            el("ol", { class: "steps" }, meal.steps.map((step) => el("li", {}, step))),
+          )
+        : null,
       known ? el("button", { onclick: () => showDetail(meal.recipe) }, "View recipe") : null,
     );
   });

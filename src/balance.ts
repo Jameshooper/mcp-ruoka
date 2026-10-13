@@ -3,6 +3,11 @@ import type { Protein } from "./schemas.ts";
 export interface MealNutrition {
 	kcal: number;
 	proteinG: number;
+	carbsG?: number;
+	fatG?: number;
+	source?: "store_data" | "estimate";
+	// Some ingredients had no label figures, so the numbers are a lower bound
+	partial?: boolean;
 }
 
 export interface PlannedMeal {

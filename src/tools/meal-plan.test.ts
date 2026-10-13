@@ -31,6 +31,36 @@ mock.module("./search.ts", () => ({
 	},
 }));
 
+// Every product lookup answers with an empty-but-valid body unless a test overrides fetch
+function stubBody(input: Request | URL | string, extra: Record<string, unknown> = {}) {
+	const q =
+		new URL(
+			typeof input === "string" ? input : input instanceof URL ? input : input.url,
+		).searchParams.get("query") ?? "";
+	const id = /id: "(\d+)"/.exec(q)?.[1] ?? "";
+	const storeId = /storeId: "(\d+)"/.exec(q)?.[1] ?? "";
+	return {
+		q,
+		id,
+		body: {
+			data: {
+				product: {
+					ean: id,
+					storeId,
+					location: null,
+					allergens: [],
+					ingredientStatement: null,
+					productDetails: { nutrients: [] },
+					...extra,
+				},
+			},
+		},
+	};
+}
+
+globalThis.fetch = (async (input: Request | URL | string) =>
+	new Response(JSON.stringify(stubBody(input).body))) as typeof fetch;
+
 const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
 const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
@@ -61,6 +91,7 @@ test("a saved recipe and an inline meal share one pack of carrots", async () => 
 		arguments: {
 			name: "Carrot rice",
 			servings: 2,
+			steps: ["Boil the rice", "Roast the carrots"],
 			ingredients: [
 				{ english: "carrots", finnish: ["porkkana"], quantity: { amount: 300, unit: "g" } },
 				{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" } },
@@ -124,6 +155,7 @@ test("balance and nutrition come from recipe tags and inline overrides", async (
 		arguments: {
 			name: "Salmon bake",
 			servings: 2,
+			steps: ["Bake the salmon"],
 			protein: "fish",
 			vegetables: true,
 			nutrition: { kcal: 620, proteinG: 38, carbsG: 55, fatG: 22 },
@@ -234,24 +266,11 @@ test("failed lookups are explained and an incomplete plan is not saved", async (
 test("only the chosen product is allergen-checked, falling back when it is flagged", async () => {
 	const seen: string[] = [];
 	globalThis.fetch = (async (input: Request | URL | string) => {
-		const q =
-			new URL(
-				typeof input === "string" ? input : input instanceof URL ? input : input.url,
-			).searchParams.get("query") ?? "";
-		const id = /id: "(\d+)"/.exec(q)?.[1] ?? "";
-		seen.push(id);
-		return new Response(
-			JSON.stringify({
-				data: {
-					product: {
-						ean: id,
-						storeId: "1",
-						allergens: [],
-						ingredientStatement: id === "111" ? "porkkana, pähkinä" : "porkkana",
-					},
-				},
-			}),
-		);
+		const { q, id, body } = stubBody(input, {
+			ingredientStatement: input.toString().includes("111") ? "porkkana, pähkinä" : "porkkana",
+		});
+		if (q.includes("allergens")) seen.push(id);
+		return new Response(JSON.stringify(body));
 	}) as typeof fetch;
 	const client = await connect();
 	const out = parse(
@@ -311,3 +330,70 @@ test("ingredients that could not be priced are saved with the plan", async () =>
 	const entry = listed.plans.find((p: { id: string }) => p.id === "gaps-week");
 	expect(entry.notPriced).toBe(2);
 });
+
+test("plans carry calories from the store labels and the method of each meal", async () => {
+	const { findPlan } = await import("../plan-book.ts");
+	globalThis.fetch = (async (input: Request | URL | string) => {
+		const { id, body } = stubBody(
+			input,
+			id211(input)
+				? {
+						productDetails: {
+							nutrients: [
+								{
+									referenceQuantity: "100 g",
+									nutrients: [
+										{ name: "Energia", value: "1 500 kJ / 358 kcal" },
+										{ name: "Rasvaa", value: "1 g" },
+										{ name: "Hiilihydraattia", value: "79 g" },
+										{ name: "Proteiinia", value: "7 g" },
+									],
+								},
+							],
+						},
+					}
+				: {},
+		);
+		void id;
+		return new Response(JSON.stringify(body));
+	}) as typeof fetch;
+
+	const client = await connect();
+	const out = parse(
+		await client.callTool({
+			name: "plan_meals",
+			arguments: {
+				chain: "s-kaupat",
+				storeId: "2", // a store no earlier test cached labels for
+				saveAs: "Label week",
+				meals: [
+					{
+						name: "Mon",
+						servings: 2,
+						steps: ["Boil the rice", "Serve"],
+						ingredients: [
+							{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" } },
+							{ english: "eggs", finnish: ["kananmuna"], quantity: { amount: 2, unit: "pcs" } },
+						],
+					},
+				],
+			},
+		}),
+	);
+	expect(out.nutrition.average).toEqual({ kcalPerPortion: 358, proteinPerPortionG: 7 });
+
+	const meal = (await findPlan("label-week"))?.meals[0];
+	expect(meal?.steps).toEqual(["Boil the rice", "Serve"]);
+	expect(meal?.nutrition).toEqual({
+		kcal: 358,
+		proteinG: 7,
+		carbsG: 79,
+		fatG: 1,
+		source: "store_data",
+		partial: true,
+	});
+});
+
+function id211(input: Request | URL | string): boolean {
+	return input.toString().includes("211");
+}

@@ -27,7 +27,8 @@ const MealSchema = z.object({
 	recipe: z.string().optional(),
 	protein: ProteinSchema.optional(),
 	vegetables: z.boolean().optional(),
-	nutrition: StoredNutritionSchema.optional(),
+	nutrition: StoredNutritionSchema.extend({ partial: z.boolean().optional() }).optional(),
+	steps: z.array(z.string()).default([]),
 });
 
 const ListSchema = z.object({ total: z.number(), lines: z.array(LineSchema) });

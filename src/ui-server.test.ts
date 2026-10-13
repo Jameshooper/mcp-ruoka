@@ -108,7 +108,7 @@ test("re-saving a recipe keeps its rating", async () => {
 const SNAPSHOT = {
 	store: { chain: "s-kaupat" as const, storeId: "1" },
 	budget: 30,
-	meals: [{ name: "Mon", servings: 2 }],
+	meals: [{ name: "Mon", servings: 2, steps: ["Cook"] }],
 	toBuy: {
 		total: 2.75,
 		lines: [

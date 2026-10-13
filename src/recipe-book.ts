@@ -13,7 +13,13 @@ export const RecipeInputSchema = z.object({
 	name: z.string().min(1).max(120),
 	servings: z.number().int().positive().max(100),
 	ingredients: z.array(IngredientSchema).min(1).max(40),
-	steps: z.array(z.string().min(1)).max(40).default([]),
+	steps: z
+		.array(z.string().min(1))
+		.min(1)
+		.max(40)
+		.describe(
+			"The method as ordered steps (required: a saved recipe without its method is not usable)",
+		),
 	tags: z.array(z.string().min(1).max(40)).max(10).default([]),
 	protein: ProteinSchema.optional(),
 	vegetables: z
@@ -26,6 +32,8 @@ export const RecipeInputSchema = z.object({
 
 const RecipeSchema = RecipeInputSchema.extend({
 	id: z.string().min(1),
+	// Recipes saved before the method was required may have none
+	steps: z.array(z.string().min(1)).max(40).default([]),
 	nutrition: StoredNutritionSchema.optional(),
 	rating: z.number().int().min(1).max(5).optional(),
 	review: z.string().max(2000).optional(),
