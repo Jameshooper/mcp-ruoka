@@ -108,7 +108,17 @@ test("re-saving a recipe keeps its rating", async () => {
 const SNAPSHOT = {
 	store: { chain: "s-kaupat" as const, storeId: "1" },
 	budget: 30,
-	meals: [{ name: "Mon", servings: 2, steps: ["Cook"] }],
+	meals: [
+		{
+			name: "Mon",
+			dish: "Rice bowl",
+			servings: 2,
+			steps: ["Cook"],
+			ingredients: [
+				{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" as const } },
+			],
+		},
+	],
 	toBuy: {
 		total: 2.75,
 		lines: [
@@ -171,4 +181,55 @@ test("meal plans can be listed, ticked off and deleted", async () => {
 	);
 	expect(del.status).toBe(200);
 	expect((await handleUiRequest(new Request("http://x/api/plans/week-42"))).status).toBe(404);
+});
+
+test("a plan can be rated, and a meal saved as a recipe and linked", async () => {
+	const { savePlan, findPlan } = await import("./plan-book.ts");
+	const { findRecipe, deleteRecipe } = await import("./recipe-book.ts");
+	const { handleUiRequest } = await import("./ui-server.ts");
+	await savePlan("Rate me", SNAPSHOT);
+
+	const rated = z
+		.object({ rating: z.number().optional(), review: z.string().optional() })
+		.parse(
+			await (
+				await handleUiRequest(put("/api/plans/rate-me/rating", { rating: 5, review: "Great week" }))
+			).json(),
+		);
+	expect(rated).toEqual({ rating: 5, review: "Great week" });
+	expect((await handleUiRequest(put("/api/plans/rate-me/rating", { rating: 7 }))).status).toBe(400);
+
+	// re-saving the plan keeps the rating
+	await savePlan("Rate me", SNAPSHOT);
+	expect((await findPlan("rate-me"))?.rating).toBe(5);
+
+	const post = (body: unknown) =>
+		handleUiRequest(
+			new Request("http://x/api/plans/rate-me/meals/0/recipe", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			}),
+		);
+	const saved = await post({ name: "Rice bowl special" });
+	expect(saved.status).toBe(200);
+	const recipe = await findRecipe("rice-bowl-special");
+	expect(recipe?.servings).toBe(2);
+	expect(recipe?.steps).toEqual(["Cook"]);
+	expect(recipe?.ingredients[0]?.finnish).toEqual(["riisi"]);
+	expect((await findPlan("rate-me"))?.meals[0]?.recipe).toBe("rice-bowl-special");
+
+	// a name that already exists is not replaced unless asked
+	const clash = await post({ name: "Rice bowl special" });
+	expect(clash.status).toBe(409);
+	expect((await post({ name: "Rice bowl special", replace: true })).status).toBe(200);
+	expect(
+		(
+			await handleUiRequest(
+				new Request("http://x/api/plans/rate-me/meals/9/recipe", { method: "POST" }),
+			)
+		).status,
+	).toBe(404);
+
+	await deleteRecipe("rice-bowl-special");
 });

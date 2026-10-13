@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import * as z from "zod/v4";
 import { slugify } from "./recipe-book.ts";
-import { ProteinSchema, StoredNutritionSchema } from "./schemas.ts";
+import { IngredientSchema, ProteinSchema, StoredNutritionSchema } from "./schemas.ts";
 
 const LineSchema = z.object({
 	ingredient: z.string(),
@@ -23,6 +23,10 @@ const LineSchema = z.object({
 
 const MealSchema = z.object({
 	name: z.string(),
+	// What the dish is called, as opposed to the slot it fills ("Chicken curry" vs "Wed dinner")
+	dish: z.string().optional(),
+	// The meal's ingredients totalled for its servings, so it can be saved as a recipe later
+	ingredients: z.array(IngredientSchema).default([]),
 	servings: z.number(),
 	recipe: z.string().optional(),
 	protein: ProteinSchema.optional(),
@@ -58,6 +62,8 @@ export const PlanSnapshotSchema = z.object({
 const PlanSchema = PlanSnapshotSchema.extend({
 	id: z.string().min(1),
 	name: z.string().min(1),
+	rating: z.number().int().min(1).max(5).optional(),
+	review: z.string().max(2000).optional(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 	// Product ids ticked off in the shopping list
@@ -131,6 +137,9 @@ export function savePlan(
 			...snapshot,
 			id,
 			name,
+			// Re-saving a plan (after tweaking it) keeps how it was rated
+			...(previous?.rating !== undefined && { rating: previous.rating }),
+			...(previous?.review !== undefined && { review: previous.review }),
 			createdAt: previous?.createdAt ?? now,
 			updatedAt: now,
 			// Keep ticks for products that are still on the replaced plan's list
@@ -140,6 +149,52 @@ export function savePlan(
 		else plans.push(plan);
 		await writePlans(plans);
 		return { plan, replaced: previous !== undefined };
+	});
+}
+
+// A null rating clears it; the review is replaced only when one is given
+export function ratePlan(
+	idOrName: string,
+	rating: number | null,
+	review?: string,
+): Promise<MealPlan | undefined> {
+	return exclusive(async () => {
+		const plans = await readPlans();
+		const index = plans.findIndex((p) => matches(p, idOrName));
+		const current = plans[index];
+		if (!current) return undefined;
+		const { rating: _rating, review: previousReview, ...rest } = current;
+		const nextReview = review ?? previousReview;
+		const updated: MealPlan = {
+			...rest,
+			...(rating !== null && { rating }),
+			...(nextReview !== undefined && nextReview !== "" && { review: nextReview }),
+		};
+		plans[index] = updated;
+		await writePlans(plans);
+		return updated;
+	});
+}
+
+// Points a meal at the recipe it was saved as, so the plan can link to it
+export function linkMealRecipe(
+	idOrName: string,
+	mealIndex: number,
+	recipeId: string,
+): Promise<MealPlan | undefined> {
+	return exclusive(async () => {
+		const plans = await readPlans();
+		const index = plans.findIndex((p) => matches(p, idOrName));
+		const current = plans[index];
+		const meal = current?.meals[mealIndex];
+		if (!current || !meal) return undefined;
+		const updated: MealPlan = {
+			...current,
+			meals: current.meals.map((m, i) => (i === mealIndex ? { ...m, recipe: recipeId } : m)),
+		};
+		plans[index] = updated;
+		await writePlans(plans);
+		return updated;
 	});
 }
 

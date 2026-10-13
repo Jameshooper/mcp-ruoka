@@ -1,10 +1,30 @@
 import { join } from "node:path";
 import * as z from "zod/v4";
 import { logger } from "./logger.ts";
-import { deletePlan, findPlan, listPlans, setChecked } from "./plan-book.ts";
-import { deleteRecipe, findRecipe, listRecipes, rateRecipe, scaleRecipe } from "./recipe-book.ts";
+import {
+	deletePlan,
+	findPlan,
+	linkMealRecipe,
+	listPlans,
+	ratePlan,
+	setChecked,
+} from "./plan-book.ts";
+import {
+	deleteRecipe,
+	findRecipe,
+	listRecipes,
+	type RecipeInput,
+	rateRecipe,
+	saveRecipe,
+	scaleRecipe,
+} from "./recipe-book.ts";
 
 const indexPath = join(import.meta.dirname, "ui", "index.html");
+
+const SaveMealBodySchema = z.object({
+	name: z.string().min(1).max(120).optional(),
+	replace: z.boolean().optional(),
+});
 
 const CheckedBodySchema = z.object({ checked: z.array(z.string()).max(200) });
 
@@ -15,6 +35,57 @@ const RatingBodySchema = z.object({
 
 function json(body: unknown, status = 200): Response {
 	return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+// Saves one meal of a plan to the recipe book and links the meal to it. An existing recipe with
+// the same name is only replaced when the caller says so.
+async function saveMealAsRecipe(
+	planId: string,
+	mealIndex: number,
+	payload: unknown,
+): Promise<Response> {
+	const body = SaveMealBodySchema.safeParse(payload);
+	if (!body.success) return json({ error: "Invalid request" }, 400);
+	const plan = await findPlan(planId);
+	const meal = plan?.meals[mealIndex];
+	if (!plan || !meal) return json({ error: "Meal not found" }, 404);
+	if (meal.ingredients.length === 0) {
+		return json(
+			{ error: "This meal has no ingredients saved; re-run the plan and save it again" },
+			400,
+		);
+	}
+
+	const name = body.data.name ?? meal.dish ?? meal.name;
+	if (!body.data.replace && (await findRecipe(name))) {
+		return json({ error: `A recipe called "${name}" already exists`, exists: true }, 409);
+	}
+
+	const n = meal.nutrition;
+	// A partial figure undercounts, so it is not stored as the recipe's nutrition
+	const nutrition =
+		n && n.carbsG !== undefined && n.fatG !== undefined && !n.partial
+			? {
+					kcal: n.kcal,
+					proteinG: n.proteinG,
+					carbsG: n.carbsG,
+					fatG: n.fatG,
+					...(n.source && { source: n.source }),
+				}
+			: undefined;
+	const input: RecipeInput = {
+		name,
+		servings: meal.servings,
+		ingredients: meal.ingredients,
+		steps: meal.steps,
+		tags: [],
+		...(meal.protein && { protein: meal.protein }),
+		...(meal.vegetables !== undefined && { vegetables: meal.vegetables }),
+		...(nutrition && { nutrition }),
+	};
+	const { recipe } = await saveRecipe(input);
+	const updated = await linkMealRecipe(plan.id, mealIndex, recipe.id);
+	return json({ recipe, plan: updated });
 }
 
 // Paths are relative so the page works behind Home Assistant's ingress prefix
@@ -36,24 +107,41 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 		return json({ plans: await listPlans() });
 	}
 
-	const planMatch = /^\/api\/plans\/([^/]+)(\/checked)?$/.exec(path);
+	const mealMatch = /^\/api\/plans\/([^/]+)\/meals\/(\d+)\/recipe$/.exec(path);
+	if (mealMatch?.[1] && mealMatch[2] && req.method === "POST") {
+		return saveMealAsRecipe(
+			decodeURIComponent(mealMatch[1]),
+			Number(mealMatch[2]),
+			await req.json().catch(() => ({})),
+		);
+	}
+
+	const planMatch = /^\/api\/plans\/([^/]+)(\/checked|\/rating)?$/.exec(path);
 	if (planMatch?.[1]) {
 		const planId = decodeURIComponent(planMatch[1]);
-		if (!planMatch[2] && req.method === "GET") {
+		const sub = planMatch[2];
+		if (!sub && req.method === "GET") {
 			const plan = await findPlan(planId);
 			return plan ? json(plan) : json({ error: "Plan not found" }, 404);
 		}
-		if (!planMatch[2] && req.method === "DELETE") {
+		if (!sub && req.method === "DELETE") {
 			const removed = await deletePlan(planId);
 			return removed ? json({ deleted: removed.id }) : json({ error: "Plan not found" }, 404);
 		}
-		if (planMatch[2] && req.method === "PUT") {
+		if (sub && req.method === "PUT") {
 			if (!req.headers.get("content-type")?.includes("application/json")) {
 				return json({ error: "Expected JSON" }, 415);
 			}
-			const body = CheckedBodySchema.safeParse(await req.json().catch(() => null));
-			if (!body.success) return json({ error: "Expected a list of product ids" }, 400);
-			const updated = await setChecked(planId, body.data.checked);
+			const payload = await req.json().catch(() => null);
+			if (sub === "/checked") {
+				const body = CheckedBodySchema.safeParse(payload);
+				if (!body.success) return json({ error: "Expected a list of product ids" }, 400);
+				const updated = await setChecked(planId, body.data.checked);
+				return updated ? json(updated) : json({ error: "Plan not found" }, 404);
+			}
+			const body = RatingBodySchema.safeParse(payload);
+			if (!body.success) return json({ error: "Rating must be 1-5 or null" }, 400);
+			const updated = await ratePlan(planId, body.data.rating, body.data.review);
 			return updated ? json(updated) : json({ error: "Plan not found" }, 404);
 		}
 		return json({ error: "Method not allowed" }, 405);

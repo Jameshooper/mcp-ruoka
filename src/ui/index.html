@@ -331,6 +331,7 @@ function planCard(plan) {
   const date = new Date(plan.updatedAt).toLocaleDateString();
   return el("div", { class: "card", onclick: () => showPlan(plan.id) },
     el("h2", {}, plan.name),
+    staticStars(plan.rating),
     el("div", { class: "meta" }, `${plan.meals.length} meals · ${date}`),
     el("div", {}, `To buy ${euro(plan.toBuy.total)}`),
     el("div", { class: "chips" },
@@ -442,24 +443,55 @@ function showPlan(id) {
     );
   };
 
-  const meals = plan.meals.map((meal) => {
+  const meals = plan.meals.map((meal, index) => {
     const info = [`${meal.servings} servings`, nutritionText(meal) || "no nutrition data"].join(" · ");
     const known = meal.recipe && recipes.some((r) => r.id === meal.recipe);
     return el("li", {},
-      el("strong", {}, meal.name),
+      el("strong", {}, meal.dish || meal.name),
       " ",
       meal.protein ? el("span", { class: "chip" }, PROTEIN_LABEL[meal.protein]) : null,
       meal.vegetables ? el("span", { class: "chip" }, "Vegetables") : null,
-      el("div", { class: "meta" }, info),
+      el("div", { class: "meta" }, meal.dish ? `${meal.name} · ${info}` : info),
       meal.steps?.length
         ? el("details", {},
             el("summary", {}, "Method"),
             el("ol", { class: "steps" }, meal.steps.map((step) => el("li", {}, step))),
           )
         : null,
-      known ? el("button", { onclick: () => showDetail(meal.recipe) }, "View recipe") : null,
+      known
+        ? el("button", { type: "button", onclick: () => showDetail(meal.recipe) }, "View recipe")
+        : meal.ingredients?.length
+          ? el("button", { type: "button", onclick: () => saveMeal(plan, index, meal) }, "Save to recipes")
+          : null,
     );
   });
+
+  const review = el("textarea", { placeholder: "How did the week go?" });
+  review.value = plan.review || "";
+  const ratingStatus = el("span", { class: "meta" });
+  const stars = el("div", { class: "stars" });
+  const saveRating = async (rating) => {
+    try {
+      const updated = await api(`api/plans/${encodeURIComponent(id)}/rating`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating, review: review.value }),
+      });
+      plans = plans.map((p) => (p.id === id ? updated : p));
+      ratingStatus.textContent = "Saved";
+      drawStars(updated.rating || 0);
+    } catch (error) {
+      ratingStatus.textContent = `Could not save: ${error.message}`;
+    }
+  };
+  const drawStars = (rating) => {
+    stars.replaceChildren(
+      ...[1, 2, 3, 4, 5].map((n) =>
+        el("button", { type: "button", class: n <= rating ? "on" : "", title: `${n} star${n > 1 ? "s" : ""}`, onclick: () => saveRating(n === rating ? null : n) }, "★"),
+      ),
+    );
+  };
+  drawStars(plan.rating || 0);
 
   const budgetLine = plan.budget === undefined
     ? null
@@ -485,19 +517,51 @@ function showPlan(id) {
       plan.balance.balanced
         ? el("div", { class: "ok" }, "Balanced week")
         : el("div", {}, plan.balance.issues.map((issue) => el("div", { class: "issue" }, issue))),
+      el("div", { class: "row" }, stars, ratingStatus),
       notPricedCount(plan) > 0 ? notPricedSection(plan) : null,
       el("h3", {}, "Meals"),
       el("ul", { class: "ing" }, meals),
       el("div", { class: "row" }, el("h3", { style: "margin:0" }, "Shopping list"), progress),
       listSection("To buy", plan.toBuy),
       listSection("Pantry check", plan.pantry),
+      el("h3", {}, "Your review"),
+      review,
       el("div", { class: "row" },
-        el("button", { class: "danger", onclick: () => removePlan(plan) }, "Delete plan"),
+        el("button", { type: "button", class: "primary", onclick: () => saveRating(plan.rating || null) }, "Save review"),
+        el("button", { type: "button", class: "danger", onclick: () => removePlan(plan) }, "Delete plan"),
       ),
     ),
   );
   updateProgress();
   window.scrollTo(0, 0);
+}
+
+async function saveMeal(plan, index, meal) {
+  const name = prompt("Save as a recipe named:", meal.dish || meal.name);
+  if (!name) return;
+  const send = (replace) =>
+    api(`api/plans/${encodeURIComponent(plan.id)}/meals/${index}/recipe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, replace }),
+    });
+  try {
+    let result;
+    try {
+      result = await send(false);
+    } catch (error) {
+      if (!String(error.message).includes("already exists")) throw error;
+      if (!confirm(`${error.message}. Replace it?`)) return;
+      result = await send(true);
+    }
+    plans = plans.map((p) => (p.id === plan.id ? result.plan : p));
+    recipes = (await api("api/recipes")).recipes;
+    renderTags();
+    showPlan(plan.id);
+    alert(`Saved "${result.recipe.name}" to the Recipes tab.`);
+  } catch (error) {
+    alert(`Could not save: ${error.message}`);
+  }
 }
 
 function closePlan() {

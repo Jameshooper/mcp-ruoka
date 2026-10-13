@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { deletePlan, findPlan, listPlans } from "../plan-book.ts";
+import { deletePlan, findPlan, listPlans, ratePlan } from "../plan-book.ts";
 
 function text(value: unknown) {
 	return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
@@ -39,6 +39,7 @@ export function registerPlanBookTools(server: McpServer): void {
 					toBuyTotal: p.toBuy.total,
 					budget: p.budget ?? null,
 					balanced: p.balance.balanced,
+					rating: p.rating ?? null,
 					notPriced: p.missing.length + p.unquantified.length,
 				})),
 			});
@@ -55,6 +56,25 @@ export function registerPlanBookTools(server: McpServer): void {
 		async ({ plan }) => {
 			const found = await findPlan(plan);
 			return found ? text(found) : notFound(plan);
+		},
+	);
+
+	server.registerTool(
+		"rate_meal_plan",
+		{
+			description:
+				"Rate a saved meal plan 1-5 stars, with an optional short review, when the user says how the week went. The same rating can be set in the Meal plans panel.",
+			inputSchema: z.object({
+				plan: z.string().min(1).describe("Plan id or name"),
+				rating: z.number().int().min(1).max(5),
+				review: z.string().max(2000).optional().describe("What worked or what to change"),
+			}),
+		},
+		async ({ plan, rating, review }) => {
+			const updated = await ratePlan(plan, rating, review);
+			return updated
+				? text({ rated: updated.id, rating, review: updated.review ?? null })
+				: notFound(plan);
 		},
 	);
 

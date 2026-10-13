@@ -36,6 +36,11 @@ import { CALL_BUDGET_MS, mapPool, resolveIngredient } from "./recipe.ts";
 const MealSchema = z.object({
 	name: z.string().min(1).describe("Label for the meal, e.g. 'Mon dinner'"),
 	servings: z.number().int().positive().max(100).describe("How many portions this meal makes"),
+	dish: z
+		.string()
+		.min(1)
+		.optional()
+		.describe("What the dish is called, e.g. 'Chicken curry' (the name is only the slot)"),
 	recipe: z
 		.string()
 		.optional()
@@ -73,6 +78,7 @@ function round2(n: number): number {
 type ResolvedMeal = Omit<PlannedMeal, "name"> & {
 	ingredients: Ingredient[];
 	steps: string[];
+	dish?: string;
 	recipeId?: string;
 };
 
@@ -90,6 +96,7 @@ async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
 			ingredients: scaleRecipe(recipe, meal.servings).ingredients,
 			recipeId: recipe.id,
 			steps: recipe.steps,
+			dish: meal.dish ?? recipe.name,
 			...(protein && { protein }),
 			...(vegetables !== undefined && { vegetables }),
 			...(nutrition && { nutrition }),
@@ -100,6 +107,7 @@ async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
 			...base,
 			ingredients: meal.ingredients,
 			steps: meal.steps ?? [],
+			...(meal.dish && { dish: meal.dish }),
 			...(meal.protein && { protein: meal.protein }),
 			...(meal.vegetables !== undefined && { vegetables: meal.vegetables }),
 			...(meal.nutrition && { nutrition: meal.nutrition }),
@@ -430,7 +438,7 @@ export function registerMealPlanTool(server: McpServer): void {
 				const snapshot: PlanSnapshot = {
 					store: output.store,
 					...(budget !== undefined && { budget }),
-					meals: resolvedMeals.map(({ ingredients: _ingredients, recipeId, ...meal }) => ({
+					meals: resolvedMeals.map(({ recipeId, ...meal }) => ({
 						...meal,
 						...(recipeId && { recipe: recipeId }),
 					})),
