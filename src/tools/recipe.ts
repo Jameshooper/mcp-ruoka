@@ -390,6 +390,10 @@ export function registerRecipeTool(server: McpServer): void {
 					allergenNote:
 						"no_match means none of the avoided terms appear in the declared allergens or ingredients; it does not rule out traces or undeclared ingredients, so check the label.",
 				}),
+				...(results.every((r) => r.status === "not_found") && {
+					storeNote:
+						"Nothing was found for any ingredient and no lookup failed. This store probably has no online grocery selection (some stores list no products at all): try another store from get_stores rather than retrying.",
+				}),
 				...((locations?.pending ?? 0) + (allergens?.pending ?? 0) > 0 && {
 					note: "Some lookups were still loading; repeat the same call in a minute and they will be returned from cache.",
 				}),
