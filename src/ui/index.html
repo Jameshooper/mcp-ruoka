@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recipes</title>
+<style>
+:root {
+  --bg: #f6f5f2; --card: #ffffff; --text: #1f2328; --muted: #6b7280; --line: #e3e1db;
+  --accent: #c2410c; --star: #f59e0b; --star-off: #d6d3cc; --chip: #efece5;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141517; --card: #1e2024; --text: #e8e6e1; --muted: #9aa0a8; --line: #2e3238;
+    --accent: #fb923c; --star: #fbbf24; --star-off: #3a3f46; --chip: #2a2d33;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 system-ui, sans-serif; }
+main { max-width: 960px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.4rem; margin: 0 0 12px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+input, select, textarea, button { font: inherit; color: inherit; }
+input[type=search], select, textarea, input[type=number] {
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+}
+input[type=search] { flex: 1 1 220px; }
+button { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: #dc2626; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; cursor: pointer; }
+.card:hover { border-color: var(--accent); }
+.card h2 { font-size: 1.05rem; margin: 0 0 4px; }
+.meta { color: var(--muted); font-size: .85rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: .78rem; }
+.stars { display: inline-flex; gap: 2px; }
+.stars button { border: 0; background: none; padding: 0 1px; font-size: 1.5rem; line-height: 1; color: var(--star-off); }
+.stars button.on { color: var(--star); }
+.stars.static span { color: var(--star-off); font-size: 1rem; }
+.stars.static span.on { color: var(--star); }
+.empty { color: var(--muted); padding: 32px 0; text-align: center; }
+.detail { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.detail h2 { margin: 0 0 4px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+ul.ing { padding-left: 20px; }
+ul.ing li.pantry { color: var(--muted); }
+ol.steps { padding-left: 22px; }
+ol.steps li { margin-bottom: 6px; }
+textarea { width: 100%; min-height: 70px; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Recipes</h1>
+  <div id="list-view">
+    <div class="toolbar">
+      <input type="search" id="search" placeholder="Search name, ingredient or tag">
+      <select id="tag"><option value="">All tags</option></select>
+      <select id="sort">
+        <option value="rating">Best rated</option>
+        <option value="name">Name</option>
+        <option value="recent">Recently updated</option>
+      </select>
+    </div>
+    <div id="grid" class="grid"></div>
+    <div id="empty" class="empty hidden"></div>
+  </div>
+  <div id="detail-view" class="hidden"></div>
+</main>
+<script>
+"use strict";
+let recipes = [];
+let _openId = null;
+
+const $ = (id) => document.getElementById(id);
+
+function el(tag, props, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props || {})) {
+    if (key === "class") node.className = value;
+    else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+    else node.setAttribute(key, value);
+  }
+  for (const child of children.flat()) {
+    if (child !== null && child !== undefined) node.append(child);
+  }
+  return node;
+}
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || response.statusText);
+  return response.json();
+}
+
+function staticStars(rating) {
+  const wrap = el("span", { class: "stars static", title: rating ? `${rating} / 5` : "Not rated" });
+  for (let i = 1; i <= 5; i++) wrap.append(el("span", { class: i <= (rating || 0) ? "on" : "" }, "★"));
+  return wrap;
+}
+
+function matches(recipe, query, tag) {
+  if (tag && !recipe.tags.some((t) => t.toLowerCase() === tag)) return false;
+  if (!query) return true;
+  const haystack = [recipe.name, ...recipe.tags, ...recipe.ingredients.flatMap((i) => [i.english, ...i.finnish])]
+    .join(" ")
+    .toLowerCase();
+  return query.split(/\s+/).every((word) => haystack.includes(word));
+}
+
+function sorted(list, mode) {
+  const copy = [...list];
+  if (mode === "name") copy.sort((a, b) => a.name.localeCompare(b.name));
+  else if (mode === "recent") copy.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  else copy.sort((a, b) => (b.rating || 0) - (a.rating || 0) || a.name.localeCompare(b.name));
+  return copy;
+}
+
+function renderList() {
+  const query = $("search").value.trim().toLowerCase();
+  const tag = $("tag").value;
+  const shown = sorted(recipes.filter((r) => matches(r, query, tag)), $("sort").value);
+  const grid = $("grid");
+  grid.replaceChildren(
+    ...shown.map((r) =>
+      el("div", { class: "card", onclick: () => showDetail(r.id) },
+        el("h2", {}, r.name),
+        staticStars(r.rating),
+        el("div", { class: "meta" }, `${r.servings} servings · ${r.ingredients.length} ingredients`),
+        el("div", { class: "chips" }, r.tags.map((t) => el("span", { class: "chip" }, t))),
+      ),
+    ),
+  );
+  const empty = $("empty");
+  empty.classList.toggle("hidden", shown.length > 0);
+  empty.textContent = recipes.length === 0
+    ? "No recipes saved yet. Ask Claude to save one."
+    : "No recipes match.";
+}
+
+function renderTags() {
+  const select = $("tag");
+  const current = select.value;
+  const tags = [...new Set(recipes.flatMap((r) => r.tags.map((t) => t.toLowerCase())))].sort();
+  select.replaceChildren(el("option", { value: "" }, "All tags"), ...tags.map((t) => el("option", { value: t }, t)));
+  select.value = tags.includes(current) ? current : "";
+}
+
+async function load() {
+  recipes = (await api("api/recipes")).recipes;
+  renderTags();
+  renderList();
+}
+
+function formatQuantity(q, factor) {
+  if (!q) return "";
+  const amount = Math.round(q.amount * factor * 100) / 100;
+  return `${amount} ${q.unit}`;
+}
+
+async function showDetail(id) {
+  _openId = id;
+  const recipe = recipes.find((r) => r.id === id);
+  if (!recipe) return;
+  $("list-view").classList.add("hidden");
+  const view = $("detail-view");
+  view.classList.remove("hidden");
+
+  const servings = el("input", { type: "number", min: "1", max: "100", value: String(recipe.servings), style: "width:80px" });
+  const ingredients = el("ul", { class: "ing" });
+  const drawIngredients = () => {
+    const factor = (Number(servings.value) || recipe.servings) / recipe.servings;
+    ingredients.replaceChildren(
+      ...recipe.ingredients.map((i) =>
+        el("li", { class: i.pantry ? "pantry" : "" },
+          [formatQuantity(i.quantity, factor), i.english].filter(Boolean).join(" "),
+          i.pantry ? " (pantry)" : "",
+        ),
+      ),
+    );
+  };
+  servings.addEventListener("input", drawIngredients);
+  drawIngredients();
+
+  const review = el("textarea", { placeholder: "What worked, what to change" });
+  review.value = recipe.review || "";
+  const status = el("span", { class: "meta" });
+
+  const save = async (rating) => {
+    try {
+      const updated = await api(`api/recipes/${encodeURIComponent(id)}/rating`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating, review: review.value }),
+      });
+      recipes = recipes.map((r) => (r.id === id ? updated : r));
+      status.textContent = "Saved";
+      drawStars(updated.rating || 0);
+    } catch (error) {
+      status.textContent = `Could not save: ${error.message}`;
+    }
+  };
+
+  const stars = el("div", { class: "stars" });
+  const drawStars = (rating) => {
+    stars.replaceChildren(
+      ...[1, 2, 3, 4, 5].map((n) =>
+        el("button", { class: n <= rating ? "on" : "", title: `${n} star${n > 1 ? "s" : ""}`, onclick: () => save(n === rating ? null : n) }, "★"),
+      ),
+    );
+  };
+  drawStars(recipe.rating || 0);
+
+  view.replaceChildren(
+    el("div", { class: "row" }, el("button", { onclick: closeDetail }, "← Back")),
+    el("div", { class: "detail" },
+      el("h2", {}, recipe.name),
+      el("div", { class: "chips" }, recipe.tags.map((t) => el("span", { class: "chip" }, t))),
+      el("div", { class: "row" }, stars, status),
+      el("div", { class: "row" }, el("label", {}, "Servings "), servings),
+      el("h3", {}, "Ingredients"), ingredients,
+      recipe.steps.length ? el("h3", {}, "Method") : null,
+      recipe.steps.length ? el("ol", { class: "steps" }, recipe.steps.map((s) => el("li", {}, s))) : null,
+      recipe.notes ? el("h3", {}, "Notes") : null,
+      recipe.notes ? el("p", {}, recipe.notes) : null,
+      el("h3", {}, "Your review"), review,
+      el("div", { class: "row" },
+        el("button", { class: "primary", onclick: () => save(recipe.rating || null) }, "Save review"),
+        el("button", { class: "danger", onclick: () => remove(recipe) }, "Delete recipe"),
+      ),
+    ),
+  );
+  window.scrollTo(0, 0);
+}
+
+function closeDetail() {
+  _openId = null;
+  $("detail-view").classList.add("hidden");
+  $("list-view").classList.remove("hidden");
+  renderList();
+}
+
+async function remove(recipe) {
+  if (!confirm(`Delete "${recipe.name}"? This cannot be undone.`)) return;
+  await api(`api/recipes/${encodeURIComponent(recipe.id)}`, { method: "DELETE" });
+  recipes = recipes.filter((r) => r.id !== recipe.id);
+  renderTags();
+  closeDetail();
+}
+
+for (const id of ["search", "tag", "sort"]) $(id).addEventListener("input", renderList);
+load().catch((error) => {
+  const empty = $("empty");
+  empty.classList.remove("hidden");
+  empty.textContent = `Could not load recipes: ${error.message}`;
+});
+</script>
+</body>
+</html>

@@ -15,6 +15,8 @@ export const RecipeInputSchema = z.object({
 
 const RecipeSchema = RecipeInputSchema.extend({
 	id: z.string().min(1),
+	rating: z.number().int().min(1).max(5).optional(),
+	review: z.string().max(2000).optional(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 });
@@ -86,11 +88,44 @@ export function saveRecipe(input: RecipeInput): Promise<{ recipe: Recipe; replac
 		const now = new Date().toISOString();
 		const index = recipes.findIndex((r) => r.id === id);
 		const previous = index >= 0 ? recipes[index] : undefined;
-		const recipe: Recipe = { ...input, id, createdAt: previous?.createdAt ?? now, updatedAt: now };
+		// Re-saving a recipe (e.g. after tweaking it) must not wipe how the household rated it
+		const recipe: Recipe = {
+			...input,
+			id,
+			...(previous?.rating !== undefined && { rating: previous.rating }),
+			...(previous?.review !== undefined && { review: previous.review }),
+			createdAt: previous?.createdAt ?? now,
+			updatedAt: now,
+		};
 		if (previous) recipes[index] = recipe;
 		else recipes.push(recipe);
 		await writeBook(recipes);
 		return { recipe, replaced: previous !== undefined };
+	});
+}
+
+// A null rating clears it; the review is replaced only when one is given
+export function rateRecipe(
+	idOrName: string,
+	rating: number | null,
+	review?: string,
+): Promise<Recipe | undefined> {
+	const wanted = idOrName.trim().toLowerCase();
+	return exclusive(async () => {
+		const recipes = await readBook();
+		const index = recipes.findIndex((r) => r.id === wanted || r.name.toLowerCase() === wanted);
+		const current = recipes[index];
+		if (!current) return undefined;
+		const { rating: _rating, review: previousReview, ...rest } = current;
+		const nextReview = review ?? previousReview;
+		const updated: Recipe = {
+			...rest,
+			...(rating !== null && { rating }),
+			...(nextReview !== undefined && nextReview !== "" && { review: nextReview }),
+		};
+		recipes[index] = updated;
+		await writeBook(recipes);
+		return updated;
 	});
 }
 

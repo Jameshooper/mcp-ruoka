@@ -48,5 +48,7 @@ fi
 export MCP_AUTH_TOKEN OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET
 export BROWSER_DATA_DIR=/data/browser
 export RUOKA_DATA_DIR=/data
+# Served only through Home Assistant ingress; the Funnel proxies port 3001 alone
+export RUOKA_UI_PORT=3002
 cd /app
 exec bun run src/index.ts

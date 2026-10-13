@@ -5,6 +5,7 @@ import {
 	findRecipe,
 	listRecipes,
 	RecipeInputSchema,
+	rateRecipe,
 	saveRecipe,
 	scaleRecipe,
 } from "../recipe-book.ts";
@@ -43,7 +44,7 @@ export function registerRecipeBookTools(server: McpServer): void {
 		"list_recipes",
 		{
 			description:
-				"List the saved recipes (id, name, servings, tags, ingredient count). Use get_recipe for the full contents.",
+				"List the saved recipes (id, name, servings, tags, rating out of 5, ingredient count). Prefer well-rated recipes when planning meals. Use get_recipe for the full contents.",
 			inputSchema: z.object({
 				tag: z.string().optional().describe("Only recipes carrying this tag"),
 			}),
@@ -60,6 +61,7 @@ export function registerRecipeBookTools(server: McpServer): void {
 					name: r.name,
 					servings: r.servings,
 					tags: r.tags,
+					rating: r.rating ?? null,
 					ingredients: r.ingredients.length,
 				})),
 			});
@@ -80,6 +82,25 @@ export function registerRecipeBookTools(server: McpServer): void {
 			const found = await findRecipe(recipe);
 			if (!found) return notFound(recipe);
 			return text(servings ? scaleRecipe(found, servings) : found);
+		},
+	);
+
+	server.registerTool(
+		"rate_recipe",
+		{
+			description:
+				"Rate a saved recipe 1-5 stars, with an optional short review, when the user says how a meal turned out. The same rating can be set in the Recipes panel.",
+			inputSchema: z.object({
+				recipe: z.string().min(1).describe("Recipe id or name"),
+				rating: z.number().int().min(1).max(5),
+				review: z.string().max(2000).optional().describe("What worked or what to change"),
+			}),
+		},
+		async ({ recipe, rating, review }) => {
+			const updated = await rateRecipe(recipe, rating, review);
+			return updated
+				? text({ rated: updated.id, rating, review: updated.review ?? null })
+				: notFound(recipe);
 		},
 	);
 
