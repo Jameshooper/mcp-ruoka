@@ -4,40 +4,15 @@ import { getProductAllergens, matchAvoidTerms } from "../browser/s-kaupat-allerg
 import { getProductLocation } from "../browser/s-kaupat-location.ts";
 import { type CostResult, type CostTotals, costProduct, sumCosts } from "../costing.ts";
 import { logger } from "../logger.ts";
+import { IngredientSchema } from "../schemas.ts";
 import type { Product } from "../types.ts";
 import { runSearch } from "./search.ts";
 
-const IngredientSchema = z.object({
-	english: z.string().min(1).describe("Ingredient as written in the recipe (e.g., 'heavy cream')"),
-	finnish: z
-		.array(z.string().min(1))
-		.min(1)
-		.max(5)
-		.describe(
-			"Finnish search terms for this ingredient, best guess first, then alternatives or synonyms (e.g., ['kuohukerma', 'ruokakerma']). Use the base/singular store-style name, not an inflected form.",
-		),
-	pantry: z
-		.boolean()
-		.optional()
-		.describe(
-			"True for staples the cook probably already has (oil, salt, sugar, common dried spices, flour, stock cubes). They are still looked up and priced, but listed and costed separately from what must be bought.",
-		),
-	quantity: z
-		.object({
-			amount: z.number().positive(),
-			unit: z.enum(["g", "kg", "ml", "l", "pcs"]),
-		})
-		.optional()
-		.describe(
-			"TOTAL amount needed for everyone being served (already scaled to the number of servings). Convert spoons and cups to g or ml. Use grams for loose produce sold by weight (onion, garlic, peppers) and pcs only for items priced per piece. Enables costing.",
-		),
-});
-
-interface CostedProduct extends Product {
+export interface CostedProduct extends Product {
 	costing?: CostResult;
 }
 
-interface IngredientResult {
+export interface IngredientResult {
 	english: string;
 	pantry: boolean;
 	status: "found" | "not_found" | "error";
@@ -48,9 +23,9 @@ interface IngredientResult {
 }
 
 // Stays under the ~60s limit MCP clients commonly apply to a tool call
-const CALL_BUDGET_MS = 50_000;
+export const CALL_BUDGET_MS = 50_000;
 
-async function mapPool<T, R>(
+export async function mapPool<T, R>(
 	items: readonly T[],
 	concurrency: number,
 	fn: (item: T) => Promise<R>,
@@ -87,7 +62,7 @@ interface DetailOptions {
 }
 
 // Lookups that miss the deadline keep running and fill the cache for the next call
-async function attachProductDetails(
+export async function attachProductDetails(
 	results: IngredientResult[],
 	storeId: string,
 	options: DetailOptions,
@@ -156,7 +131,7 @@ async function attachProductDetails(
 	return { locations, allergens };
 }
 
-async function resolveIngredient(
+export async function resolveIngredient(
 	ingredient: z.infer<typeof IngredientSchema>,
 	chain: "k-ruoka" | "s-kaupat",
 	storeId: string,

@@ -7,7 +7,7 @@ export interface Quantity {
 	unit: QuantityUnit;
 }
 
-type Dimension = "mass" | "volume" | "count";
+export type Dimension = "mass" | "volume" | "count";
 
 interface Base {
 	dimension: Dimension;
@@ -72,7 +72,7 @@ export function toBase(quantity: Quantity): Base {
 	}
 }
 
-function describePack(dimension: Dimension, size: number): string {
+export function describePack(dimension: Dimension, size: number): string {
 	switch (dimension) {
 		case "mass":
 			return size < 1 ? `${Math.round(size * 1000)} g` : `${round2(size)} kg`;
@@ -105,6 +105,19 @@ export function costProduct(
 		packages,
 		basketCost: round2(packages * product.price),
 		usedCost: round2(need.value * unitPrice.perBase),
+	};
+}
+
+// Pack size in the base unit (kg, l or pieces), or null when the unit price is unusable
+export function packSizeBase(
+	product: Pick<Product, "price" | "unitPrice">,
+): { size: number; dimension: Dimension; perBase: number } | null {
+	const unitPrice = parseUnitPrice(product.unitPrice);
+	if (product.price == null || product.price <= 0 || !unitPrice) return null;
+	return {
+		size: product.price / unitPrice.perBase,
+		dimension: unitPrice.dimension,
+		perBase: unitPrice.perBase,
 	};
 }
 

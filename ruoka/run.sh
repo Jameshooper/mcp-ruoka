@@ -47,5 +47,6 @@ fi
 
 export MCP_AUTH_TOKEN OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET
 export BROWSER_DATA_DIR=/data/browser
+export RUOKA_DATA_DIR=/data
 cd /app
 exec bun run src/index.ts

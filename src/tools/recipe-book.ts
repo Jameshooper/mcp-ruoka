@@ -1,0 +1,97 @@
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import * as z from "zod/v4";
+import {
+	deleteRecipe,
+	findRecipe,
+	listRecipes,
+	RecipeInputSchema,
+	saveRecipe,
+	scaleRecipe,
+} from "../recipe-book.ts";
+
+function text(value: unknown) {
+	return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
+}
+
+function notFound(idOrName: string) {
+	return {
+		isError: true,
+		content: [
+			{
+				type: "text" as const,
+				text: `No saved recipe matches "${idOrName}". Call list_recipes to see what is saved.`,
+			},
+		],
+	};
+}
+
+export function registerRecipeBookTools(server: McpServer): void {
+	server.registerTool(
+		"save_recipe",
+		{
+			description:
+				"Save a recipe to the personal recipe book so it can be reused later, scaled to any number of servings, and combined into a meal plan. Saving with the same name replaces the earlier version. Ingredient quantities are the TOTAL for the given servings count; include the Finnish search terms so the recipe can be priced without translating again.",
+			inputSchema: RecipeInputSchema,
+		},
+		async (input) => {
+			const { recipe, replaced } = await saveRecipe(input);
+			return text({ saved: recipe.id, replaced, name: recipe.name, servings: recipe.servings });
+		},
+	);
+
+	server.registerTool(
+		"list_recipes",
+		{
+			description:
+				"List the saved recipes (id, name, servings, tags, ingredient count). Use get_recipe for the full contents.",
+			inputSchema: z.object({
+				tag: z.string().optional().describe("Only recipes carrying this tag"),
+			}),
+		},
+		async ({ tag }) => {
+			const wanted = tag?.toLowerCase();
+			const recipes = (await listRecipes()).filter(
+				(r) => !wanted || r.tags.some((t) => t.toLowerCase() === wanted),
+			);
+			return text({
+				count: recipes.length,
+				recipes: recipes.map((r) => ({
+					id: r.id,
+					name: r.name,
+					servings: r.servings,
+					tags: r.tags,
+					ingredients: r.ingredients.length,
+				})),
+			});
+		},
+	);
+
+	server.registerTool(
+		"get_recipe",
+		{
+			description:
+				"Get one saved recipe by id or name, optionally with the quantities scaled to a different number of servings.",
+			inputSchema: z.object({
+				recipe: z.string().min(1).describe("Recipe id or name"),
+				servings: z.number().int().positive().max(100).optional().describe("Scale to this many"),
+			}),
+		},
+		async ({ recipe, servings }) => {
+			const found = await findRecipe(recipe);
+			if (!found) return notFound(recipe);
+			return text(servings ? scaleRecipe(found, servings) : found);
+		},
+	);
+
+	server.registerTool(
+		"delete_recipe",
+		{
+			description: "Delete a saved recipe by id or name. Only do this when the user asks.",
+			inputSchema: z.object({ recipe: z.string().min(1).describe("Recipe id or name") }),
+		},
+		async ({ recipe }) => {
+			const removed = await deleteRecipe(recipe);
+			return removed ? text({ deleted: removed.id }) : notFound(recipe);
+		},
+	);
+}
