@@ -47,6 +47,9 @@ export const PlanSnapshotSchema = z.object({
 		average: z.object({ kcalPerPortion: z.number(), proteinPerPortionG: z.number() }).nullable(),
 		missing: z.array(z.string()),
 	}),
+	// Ingredients left out of the totals; plans saved before this existed load with none
+	missing: z.array(z.object({ ingredient: z.string(), reason: z.string() })).default([]),
+	unquantified: z.array(z.object({ meal: z.string(), ingredient: z.string() })).default([]),
 	waste: z.object({ leftoverValue: z.number() }),
 	pooling: z.object({ saved: z.number() }),
 });

@@ -132,6 +132,8 @@ const SNAPSHOT = {
 	pantry: { total: 0, lines: [] },
 	balance: { balanced: true, issues: [], counts: { fish: 1 } },
 	nutrition: { average: null, missing: ["Mon"] },
+	missing: [],
+	unquantified: [],
 	waste: { leftoverValue: 2.2 },
 	pooling: { saved: 0 },
 };

@@ -59,6 +59,7 @@ label.line input { margin-top: 5px; width: 18px; height: 18px; flex: none; }
 .issue { color: #b45309; margin: 2px 0; }
 .ok { color: #15803d; }
 .stat { display: inline-block; margin-right: 14px; }
+.warn { border: 1px solid #d97706; border-radius: 8px; padding: 8px 12px; margin: 12px 0; }
 .hidden { display: none; }
 </style>
 </head>
@@ -321,6 +322,10 @@ let plans = [];
 
 const euro = (n) => `${n.toFixed(2)} €`;
 
+function notPricedCount(plan) {
+  return plan.missing.length + plan.unquantified.length;
+}
+
 function planCard(plan) {
   const date = new Date(plan.updatedAt).toLocaleDateString();
   return el("div", { class: "card", onclick: () => showPlan(plan.id) },
@@ -328,6 +333,9 @@ function planCard(plan) {
     el("div", { class: "meta" }, `${plan.meals.length} meals · ${date}`),
     el("div", {}, `To buy ${euro(plan.toBuy.total)}`),
     el("div", { class: "chips" },
+      notPricedCount(plan) > 0
+        ? el("span", { class: "chip" }, `${notPricedCount(plan)} not priced`)
+        : null,
       el("span", { class: "chip" }, plan.balance.balanced ? "Balanced" : "Needs balance"),
       plan.budget !== undefined
         ? el("span", { class: "chip" }, plan.toBuy.total <= plan.budget ? "Within budget" : "Over budget")
@@ -360,6 +368,17 @@ function groupByAisle(lines) {
     if (a === "" || b === "") return a === "" ? 1 : -1;
     return Number(a) - Number(b) || a.localeCompare(b);
   });
+}
+
+function notPricedSection(plan) {
+  return el("div", { class: "warn" },
+    el("strong", {}, "Not priced: not in the total above"),
+    el("ul", { class: "ing" },
+      plan.missing.map((m) => el("li", {}, `${m.ingredient}: ${m.reason}`)),
+      plan.unquantified.map((u) => el("li", {}, `${u.ingredient} (${u.meal}): no quantity given`)),
+    ),
+    el("div", { class: "meta" }, "Buy these separately or ask Claude for substitutes and to re-run the plan."),
+  );
 }
 
 function showPlan(id) {
@@ -453,6 +472,9 @@ function showPlan(id) {
       el("div", { class: "meta" }, `${plan.store.chain} store ${plan.store.storeId} · saved ${new Date(plan.updatedAt).toLocaleDateString()}`),
       el("div", { class: "row" },
         el("span", { class: "stat" }, `To buy ${euro(plan.toBuy.total)}`),
+        notPricedCount(plan) > 0
+          ? el("span", { class: "stat issue" }, `+ ${notPricedCount(plan)} not priced`)
+          : null,
         budgetLine,
         el("span", { class: "stat" }, `Pantry ${euro(plan.pantry.total)}`),
         avg ? el("span", { class: "stat" }, `Avg ${avg.kcalPerPortion} kcal · ${avg.proteinPerPortionG} g protein`) : null,
@@ -460,6 +482,7 @@ function showPlan(id) {
       plan.balance.balanced
         ? el("div", { class: "ok" }, "Balanced week")
         : el("div", {}, plan.balance.issues.map((issue) => el("div", { class: "issue" }, issue))),
+      notPricedCount(plan) > 0 ? notPricedSection(plan) : null,
       el("h3", {}, "Meals"),
       el("ul", { class: "ing" }, meals),
       el("div", { class: "row" }, el("h3", { style: "margin:0" }, "Shopping list"), progress),

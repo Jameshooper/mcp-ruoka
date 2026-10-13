@@ -277,3 +277,37 @@ test("only the chosen product is allergen-checked, falling back when it is flagg
 	expect(seen).toEqual(["111", "112"]);
 	expect(out.toBuy.lines[0].productId).toBe("112");
 });
+
+test("ingredients that could not be priced are saved with the plan", async () => {
+	const { findPlan } = await import("../plan-book.ts");
+	const client = await connect();
+	const out = parse(
+		await client.callTool({
+			name: "plan_meals",
+			arguments: {
+				chain: "s-kaupat",
+				storeId: "1",
+				saveAs: "Gaps week",
+				meals: [
+					{
+						name: "Mon",
+						servings: 2,
+						ingredients: [
+							{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" } },
+							{ english: "mystery", finnish: ["tuntematon"], quantity: { amount: 1, unit: "kg" } },
+							{ english: "salt", finnish: ["suola"] },
+						],
+					},
+				],
+			},
+		}),
+	);
+	expect(out.saved.id).toBe("gaps-week");
+	const plan = await findPlan("gaps-week");
+	expect(plan?.missing).toEqual([{ ingredient: "mystery", reason: "not found in this store" }]);
+	expect(plan?.unquantified).toEqual([{ meal: "Mon", ingredient: "salt" }]);
+
+	const listed = parse(await client.callTool({ name: "list_meal_plans", arguments: {} }));
+	const entry = listed.plans.find((p: { id: string }) => p.id === "gaps-week");
+	expect(entry.notPriced).toBe(2);
+});

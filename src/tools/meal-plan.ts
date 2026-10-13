@@ -344,6 +344,8 @@ export function registerMealPlanTool(server: McpServer): void {
 					})),
 					toBuy: output.toBuy,
 					pantry: output.pantry,
+					missing,
+					unquantified,
 					balance: output.balance,
 					nutrition: output.nutrition,
 					waste: { leftoverValue: output.waste.leftoverValue },

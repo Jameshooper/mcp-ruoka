@@ -1,5 +1,5 @@
 name: Ruoka MCP
-version: "0.7.2"
+version: "0.7.3"
 slug: ruoka
 description: MCP server for Finnish grocery and alcohol search (K-Ruoka, S-Kaupat, Alko), exposed to Claude via Tailscale Funnel
 url: https://github.com/Jameshooper/mcp-ruoka

@@ -23,7 +23,7 @@ export function registerPlanBookTools(server: McpServer): void {
 		"list_meal_plans",
 		{
 			description:
-				"List the saved weekly meal plans (id, name, meals, shopping total, budget, whether balanced). Plans are saved by calling plan_meals with saveAs.",
+				"List the saved weekly meal plans (id, name, meals, shopping total, budget, whether balanced, how many ingredients are not priced and so missing from the total). Plans are saved by calling plan_meals with saveAs.",
 			inputSchema: z.object({}),
 		},
 		async () => {
@@ -39,6 +39,7 @@ export function registerPlanBookTools(server: McpServer): void {
 					toBuyTotal: p.toBuy.total,
 					budget: p.budget ?? null,
 					balanced: p.balance.balanced,
+					notPriced: p.missing.length + p.unquantified.length,
 				})),
 			});
 		},
