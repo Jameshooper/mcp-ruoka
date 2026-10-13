@@ -13,19 +13,22 @@ const RICE = [{ name: "Rice 1 kg", price: 2.75, unitPrice: "2,75 €/kg", id: "2
 
 mock.module("./search.ts", () => ({
 	registerSearchTool: () => {},
-	runSearch: async (_chain: string, query: string) => ({
-		products: (query === "porkkana" ? CARROTS : query === "riisi" ? RICE : []).map((p) => ({
-			...p,
-			imageUrl: null,
-			brand: null,
-			category: null,
-			url: null,
-		})),
-		totalCount: 1,
-		query,
-		storeId: "S",
-		chain: "s-kaupat",
-	}),
+	runSearch: async (_chain: string, query: string) => {
+		if (query === "rikki") throw new Error("S-Kaupat API HTTP 403");
+		return {
+			products: (query === "porkkana" ? CARROTS : query === "riisi" ? RICE : []).map((p) => ({
+				...p,
+				imageUrl: null,
+				brand: null,
+				category: null,
+				url: null,
+			})),
+			totalCount: 1,
+			query,
+			storeId: "S",
+			chain: "s-kaupat",
+		};
+	},
 }));
 
 const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
@@ -196,4 +199,81 @@ test("saveAs stores the plan and replacing it keeps still-valid ticks", async ()
 	expect(listed.plans.some((p: { id: string }) => p.id === "week-42")).toBe(true);
 	const missing = await client.callTool({ name: "get_meal_plan", arguments: { plan: "nope" } });
 	expect((missing as { isError?: boolean }).isError).toBe(true);
+});
+
+test("failed lookups are explained and an incomplete plan is not saved", async () => {
+	const { findPlan } = await import("../plan-book.ts");
+	const client = await connect();
+	const out = parse(
+		await client.callTool({
+			name: "plan_meals",
+			arguments: {
+				chain: "s-kaupat",
+				storeId: "1",
+				saveAs: "Broken week",
+				meals: [
+					{
+						name: "Mon",
+						servings: 2,
+						ingredients: [
+							{ english: "broken", finnish: ["rikki"], quantity: { amount: 1, unit: "kg" } },
+						],
+					},
+				],
+			},
+		}),
+	);
+	expect(out.missing).toEqual([
+		{ ingredient: "broken", reason: "lookup failed: S-Kaupat API HTTP 403" },
+	]);
+	expect(out.lookupFailures).toBe(1);
+	expect(out.saved.skipped).toBe(true);
+	expect(await findPlan("broken-week")).toBeUndefined();
+});
+
+test("only the chosen product is allergen-checked, falling back when it is flagged", async () => {
+	const seen: string[] = [];
+	globalThis.fetch = (async (input: Request | URL | string) => {
+		const q =
+			new URL(
+				typeof input === "string" ? input : input instanceof URL ? input : input.url,
+			).searchParams.get("query") ?? "";
+		const id = /id: "(\d+)"/.exec(q)?.[1] ?? "";
+		seen.push(id);
+		return new Response(
+			JSON.stringify({
+				data: {
+					product: {
+						ean: id,
+						storeId: "1",
+						allergens: [],
+						ingredientStatement: id === "111" ? "porkkana, pähkinä" : "porkkana",
+					},
+				},
+			}),
+		);
+	}) as typeof fetch;
+	const client = await connect();
+	const out = parse(
+		await client.callTool({
+			name: "plan_meals",
+			arguments: {
+				chain: "s-kaupat",
+				storeId: "1",
+				avoidAllergens: ["pähkin"],
+				meals: [
+					{
+						name: "Mon",
+						servings: 2,
+						ingredients: [
+							{ english: "carrots", finnish: ["porkkana"], quantity: { amount: 700, unit: "g" } },
+						],
+					},
+				],
+			},
+		}),
+	);
+	// the cheaper 1 kg bag (111) is flagged, so the 500 g bags (112) are used
+	expect(seen).toEqual(["111", "112"]);
+	expect(out.toBuy.lines[0].productId).toBe("112");
 });

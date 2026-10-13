@@ -13,7 +13,7 @@ import {
 	PROTEIN_CATEGORIES,
 	ProteinSchema,
 } from "../schemas.ts";
-import type { Product, ProductLocation } from "../types.ts";
+import type { AllergenCheck, ProductLocation } from "../types.ts";
 import { CALL_BUDGET_MS, mapPool, resolveIngredient } from "./recipe.ts";
 
 const MealSchema = z.object({
@@ -76,10 +76,6 @@ async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
 		};
 	}
 	return "Give either a saved `recipe` or `ingredients`";
-}
-
-function isFlagged(product: Product): boolean {
-	return product.allergenCheck?.status === "flagged";
 }
 
 async function shelfLocation(ean: string, storeId: string): Promise<ProductLocation | null> {
@@ -187,40 +183,35 @@ export function registerMealPlanTool(server: McpServer): void {
 			);
 
 			const avoidTerms = avoidAllergens ?? [];
-			if (chain === "s-kaupat" && avoidTerms.length > 0) {
-				const pending: Promise<void>[] = [];
-				for (const { result } of searched) {
-					for (const product of result.products) {
-						pending.push(
-							getProductAllergens(product.id, storeId).then(
-								(details) => {
-									product.allergenCheck = matchAvoidTerms(details, avoidTerms);
-								},
-								() => {
-									product.allergenCheck = { status: "unknown", flags: [] };
-								},
-							),
+			// Only the product that would be bought is checked, then the next best if it is flagged:
+			// checking every candidate of every ingredient is ~5x the requests and trips the
+			// chain's rate limit on big plans
+			const lines = await mapPool(
+				searched,
+				chain === "s-kaupat" ? 4 : 1,
+				async ({ item, result }) => {
+					let candidates = [...result.products];
+					let excludedByAllergen = 0;
+					for (;;) {
+						const choice = choosePack(candidates, item, preference);
+						if (!choice || chain !== "s-kaupat" || avoidTerms.length === 0) {
+							return { item, result, choice, excludedByAllergen };
+						}
+						if (Date.now() > deadline) {
+							choice.product.allergenCheck = { status: "pending", flags: [] };
+							return { item, result, choice, excludedByAllergen };
+						}
+						const check = await getProductAllergens(choice.product.id, storeId).then(
+							(details) => matchAvoidTerms(details, avoidTerms),
+							(): AllergenCheck => ({ status: "unknown", flags: [] }),
 						);
+						choice.product.allergenCheck = check;
+						if (check.status !== "flagged") return { item, result, choice, excludedByAllergen };
+						excludedByAllergen++;
+						candidates = candidates.filter((p) => p !== choice.product);
 					}
-				}
-				await Promise.race([
-					Promise.all(pending),
-					new Promise<void>((resolve) =>
-						setTimeout(resolve, Math.max(deadline - Date.now(), 1_000)),
-					),
-				]);
-			}
-
-			const lines = searched.map(({ item, result }) => {
-				const candidates = result.products.filter((p) => !isFlagged(p));
-				const choice = choosePack(candidates, item, preference);
-				return {
-					item,
-					result,
-					choice,
-					excludedByAllergen: result.products.length - candidates.length,
-				};
-			});
+				},
+			);
 
 			if (chain === "s-kaupat" && includeLocation) {
 				const locations = new Map<string, ProductLocation | null>();
@@ -289,7 +280,7 @@ export function registerMealPlanTool(server: McpServer): void {
 					ingredient: l.item.english,
 					reason:
 						l.result.status === "error"
-							? "lookup failed"
+							? `lookup failed: ${l.result.error ?? "unknown error"}`
 							: l.result.products.length === 0
 								? "not found in this store"
 								: l.excludedByAllergen === l.result.products.length
@@ -333,8 +324,17 @@ export function registerMealPlanTool(server: McpServer): void {
 				note: "Totals are whole packs. leftoverValue prices the unused part at the product's unit price. no_match on allergens is not a safety guarantee: check labels.",
 			};
 
+			// A plan priced from failed lookups would understate the shopping list, so it is not kept
+			const lookupFailures = lines.filter((l) => l.result.status === "error").length;
+			const saveBlocked =
+				saveAs && (shopping.length === 0 || lookupFailures > 0)
+					? shopping.length === 0
+						? "Nothing could be priced, so the plan was not saved."
+						: `${lookupFailures} ingredient lookups failed, so the totals are incomplete and the plan was not saved.`
+					: null;
+
 			let saved: { id: string; name: string; replaced: boolean } | undefined;
-			if (saveAs) {
+			if (saveAs && !saveBlocked) {
 				const snapshot: PlanSnapshot = {
 					store: output.store,
 					...(budget !== undefined && { budget }),
@@ -357,7 +357,20 @@ export function registerMealPlanTool(server: McpServer): void {
 				content: [
 					{
 						type: "text" as const,
-						text: JSON.stringify({ ...output, ...(saved && { saved }) }, null, 2),
+						text: JSON.stringify(
+							{
+								...output,
+								...(lookupFailures > 0 && {
+									lookupFailures,
+									retryAdvice:
+										"Lookups failed (see missing). If the reason is HTTP 403 the chain is rate limiting this server: wait a few minutes and call again rather than retrying at once.",
+								}),
+								...(saved && { saved }),
+								...(saveBlocked && { saved: { skipped: true, reason: saveBlocked } }),
+							},
+							null,
+							2,
+						),
 					},
 				],
 			};
