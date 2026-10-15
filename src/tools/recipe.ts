@@ -7,6 +7,7 @@ import { type CostResult, type CostTotals, costProduct, sumCosts } from "../cost
 import { logger } from "../logger.ts";
 import { type Macros, macrosFor, quantityAmount, roundMacros, sumMacros } from "../nutrition.ts";
 import { IngredientSchema } from "../schemas.ts";
+import { resolveStoreName } from "../store-names.ts";
 import type { Product } from "../types.ts";
 import { runSearch } from "./search.ts";
 
@@ -358,6 +359,14 @@ export function registerRecipeTool(server: McpServer): void {
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]).describe("Which chain's store to check"),
 				storeId: z.string().min(1).describe("Store ID from get_stores"),
+				storeName: z
+					.string()
+					.min(1)
+					.max(120)
+					.optional()
+					.describe(
+						"The store's name as listed by get_stores (e.g. 'Prisma Linnainmaa'), kept with the saved price",
+					),
 				ingredients: z.array(IngredientSchema).min(1).max(40),
 				avoidAllergens: z
 					.array(z.string().min(2))
@@ -409,6 +418,7 @@ export function registerRecipeTool(server: McpServer): void {
 		async ({
 			chain,
 			storeId,
+			storeName,
 			ingredients,
 			servings,
 			avoidAllergens,
@@ -460,6 +470,7 @@ export function registerRecipeTool(server: McpServer): void {
 			const pantryCost = summarizeCosts(results, ingredients, servings, true);
 			// The meal's price when looked up, ready to be saved with the recipe: pro-rata over
 			// everything (staples included), plus the whole packs to buy
+			const resolvedStoreName = await resolveStoreName(chain, storeId, storeName);
 			const estimatedCost =
 				servings && (cost || pantryCost)
 					? (() => {
@@ -470,6 +481,7 @@ export function registerRecipeTool(server: McpServer): void {
 								...(cost && { basketTotal: cost.topMatch.basketTotal }),
 								chain,
 								storeId,
+								...(resolvedStoreName && { storeName: resolvedStoreName }),
 								pricedAt: new Date().toISOString(),
 								complete: (cost?.uncosted.length ?? 0) + (pantryCost?.uncosted.length ?? 0) === 0,
 							};

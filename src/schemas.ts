@@ -81,6 +81,7 @@ export const EstimatedCostSchema = z
 			.describe("EUR for the whole packs to buy, pantry staples excluded"),
 		chain: z.enum(["k-ruoka", "s-kaupat"]),
 		storeId: z.string(),
+		storeName: z.string().optional().describe("e.g. Prisma Linnainmaa"),
 		pricedAt: z.string().describe("When the prices were looked up (ISO date)"),
 		complete: z
 			.boolean()

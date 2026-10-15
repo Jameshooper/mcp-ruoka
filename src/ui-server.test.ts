@@ -106,7 +106,7 @@ test("re-saving a recipe keeps its rating", async () => {
 });
 
 const SNAPSHOT = {
-	store: { chain: "s-kaupat" as const, storeId: "1" },
+	store: { chain: "s-kaupat" as const, storeId: "1", name: "Prisma Linnainmaa" },
 	budget: 30,
 	meals: [
 		{
@@ -224,6 +224,7 @@ test("a plan can be rated, and a meal saved as a recipe and linked", async () =>
 		perPortion: 0.8,
 		chain: "s-kaupat",
 		storeId: "1",
+		storeName: "Prisma Linnainmaa",
 		complete: true,
 	});
 	expect(recipe?.estimatedCost?.pricedAt).toBe((await findPlan("rate-me"))?.updatedAt);
@@ -242,4 +243,14 @@ test("a plan can be rated, and a meal saved as a recipe and linked", async () =>
 	).toBe(404);
 
 	await deleteRecipe("rice-bowl-special");
+});
+
+test("remembered store names are served for display", async () => {
+	const { rememberStores } = await import("./store-names.ts");
+	const { handleUiRequest } = await import("./ui-server.ts");
+	await rememberStores([{ chain: "s-kaupat", id: "613756972", name: "Prisma Linnainmaa" }]);
+	const body = z
+		.object({ names: z.record(z.string(), z.string()) })
+		.parse(await (await handleUiRequest(new Request("http://x/api/stores"))).json());
+	expect(body.names["s-kaupat:613756972"]).toBe("Prisma Linnainmaa");
 });

@@ -30,6 +30,7 @@ import {
 	PROTEIN_CATEGORIES,
 	ProteinSchema,
 } from "../schemas.ts";
+import { resolveStoreName } from "../store-names.ts";
 import type { AllergenCheck, ProductLocation } from "../types.ts";
 import { CALL_BUDGET_MS, mapPool, resolveIngredient } from "./recipe.ts";
 
@@ -221,6 +222,14 @@ export function registerMealPlanTool(server: McpServer): void {
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]),
 				storeId: z.string().min(1).describe("Store ID from get_stores"),
+				storeName: z
+					.string()
+					.min(1)
+					.max(120)
+					.optional()
+					.describe(
+						"The store's name as listed by get_stores (e.g. 'Prisma Linnainmaa'), shown on the saved plan",
+					),
 				meals: z.array(MealSchema).min(1).max(28),
 				budget: z
 					.number()
@@ -272,6 +281,7 @@ export function registerMealPlanTool(server: McpServer): void {
 		async ({
 			chain,
 			storeId,
+			storeName,
 			meals,
 			budget,
 			preference,
@@ -416,8 +426,9 @@ export function registerMealPlanTool(server: McpServer): void {
 									: "price or unit not comparable",
 				}));
 
+			const resolvedName = await resolveStoreName(chain, storeId, storeName);
 			const output = {
-				store: { chain, storeId },
+				store: { chain, storeId, ...(resolvedName && { name: resolvedName }) },
 				meals: inputs.map((m) => m.meal),
 				mealCosts: resolvedMeals.map((m) => ({ meal: m.name, ...m.cost })),
 				toBuy: {

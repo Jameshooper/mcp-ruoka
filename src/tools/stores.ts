@@ -4,6 +4,7 @@ import * as alko from "../browser/alko.ts";
 import * as kRuoka from "../browser/k-ruoka.ts";
 import * as sKaupat from "../browser/s-kaupat.ts";
 import { logger } from "../logger.ts";
+import { rememberStores } from "../store-names.ts";
 import type { Chain, Store } from "../types.ts";
 
 export function registerStoresTool(server: McpServer): void {
@@ -64,6 +65,10 @@ export function registerStoresTool(server: McpServer): void {
 					isError: true,
 				};
 			}
+
+			await rememberStores(stores).catch((err) =>
+				logger.warn({ err }, "Could not remember store names"),
+			);
 
 			const parts: string[] = [JSON.stringify(stores, null, 2)];
 			if (errors.length > 0) {

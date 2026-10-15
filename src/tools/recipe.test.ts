@@ -76,6 +76,7 @@ test("includeNutrition totals the labels of the chosen products per portion", as
 		arguments: {
 			chain: "s-kaupat",
 			storeId: "777",
+			storeName: "Prisma Linnainmaa",
 			servings: 2,
 			includeNutrition: true,
 			ingredients: [
@@ -99,6 +100,7 @@ test("includeNutrition totals the labels of the chosen products per portion", as
 		basketTotal: 4,
 		chain: "s-kaupat",
 		storeId: "777",
+		storeName: "Prisma Linnainmaa",
 		complete: false,
 	});
 	expect(out.nutrition.notCounted).toEqual([

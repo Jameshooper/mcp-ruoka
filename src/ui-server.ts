@@ -18,6 +18,7 @@ import {
 	saveRecipe,
 	scaleRecipe,
 } from "./recipe-book.ts";
+import { getStoreNames } from "./store-names.ts";
 
 const indexPath = join(import.meta.dirname, "ui", "index.html");
 
@@ -80,6 +81,7 @@ async function saveMealAsRecipe(
 				perPortion: meal.cost.perPortion,
 				chain: plan.store.chain,
 				storeId: plan.store.storeId,
+				...(plan.store.name && { storeName: plan.store.name }),
 				pricedAt: plan.updatedAt,
 				...(meal.cost.complete !== undefined && { complete: meal.cost.complete }),
 			}
@@ -113,6 +115,10 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 
 	if (path === "/api/recipes" && req.method === "GET") {
 		return json({ recipes: await listRecipes() });
+	}
+
+	if (path === "/api/stores" && req.method === "GET") {
+		return json({ names: await getStoreNames() });
 	}
 
 	if (path === "/api/plans" && req.method === "GET") {

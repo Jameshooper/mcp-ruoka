@@ -365,6 +365,7 @@ test("plans carry calories from the store labels and the method of each meal", a
 			arguments: {
 				chain: "s-kaupat",
 				storeId: "2", // a store no earlier test cached labels for
+				storeName: "Prisma Linnainmaa",
 				saveAs: "Label week",
 				meals: [
 					{
@@ -382,6 +383,11 @@ test("plans carry calories from the store labels and the method of each meal", a
 	);
 	expect(out.nutrition.average).toEqual({ kcalPerPortion: 358, proteinPerPortionG: 7 });
 
+	expect((await findPlan("label-week"))?.store).toEqual({
+		chain: "s-kaupat",
+		storeId: "2",
+		name: "Prisma Linnainmaa",
+	});
 	const meal = (await findPlan("label-week"))?.meals[0];
 	expect(meal?.steps).toEqual(["Boil the rice", "Serve"]);
 	// rice 200 g at 2.75 EUR/kg for 2 portions; the eggs are not in the store

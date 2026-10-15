@@ -42,7 +42,11 @@ const MealSchema = z.object({
 const ListSchema = z.object({ total: z.number(), lines: z.array(LineSchema) });
 
 export const PlanSnapshotSchema = z.object({
-	store: z.object({ chain: z.enum(["k-ruoka", "s-kaupat"]), storeId: z.string() }),
+	store: z.object({
+		chain: z.enum(["k-ruoka", "s-kaupat"]),
+		storeId: z.string(),
+		name: z.string().optional(),
+	}),
 	budget: z.number().optional(),
 	meals: z.array(MealSchema),
 	toBuy: ListSchema,

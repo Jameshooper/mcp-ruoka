@@ -556,6 +556,7 @@ label.line .meta { font-size: 14px; }
 let recipes = [];
 let plans = [];
 let tab = "recipes";
+let storeNames = {};
 
 const $ = (id) => document.getElementById(id);
 
@@ -650,6 +651,10 @@ function macrosCard(n) {
   );
 }
 
+function storeLabel(chain, id, name) {
+  return name || storeNames[`${chain}:${id}`] || `${CHAIN_LABEL[chain] || chain} store ${id}`;
+}
+
 const CHAIN_LABEL = { "s-kaupat": "S-Kaupat", "k-ruoka": "K-Ruoka" };
 
 // The price the recipe had when it was created. The total follows the servings stepper, since the
@@ -662,7 +667,7 @@ function priceCard(recipe) {
   const when = new Date(cost.pricedAt).toLocaleDateString();
   const update = (servings) => {
     big.textContent = `≈ ${euro(cost.perPortion)} / portion${cost.complete === false ? "+" : ""}`;
-    sub.textContent = `${euro(cost.perPortion * servings)} for ${servings} · priced ${when} at ${CHAIN_LABEL[cost.chain] || cost.chain} (store ${cost.storeId})`
+    sub.textContent = `${euro(cost.perPortion * servings)} for ${servings} · priced ${when} at ${storeLabel(cost.chain, cost.storeId, cost.storeName)}`
       + (cost.complete === false ? " · some ingredients not priced" : "");
   };
   update(recipe.servings);
@@ -758,6 +763,7 @@ function renderTags() {
 }
 
 async function load() {
+  storeNames = (await api("api/stores").catch(() => ({ names: {} }))).names;
   recipes = (await api("api/recipes")).recipes;
   renderTags();
   renderList();
@@ -1075,7 +1081,7 @@ function showPlan(id) {
       el("div", { class: "hero tone-plan" },
         el("div", { class: "emoji" }, "🗓️"),
         el("h2", {}, plan.name),
-        el("div", { class: "meta" }, `${plan.store.chain} store ${plan.store.storeId} · saved ${new Date(plan.updatedAt).toLocaleDateString()}`),
+        el("div", { class: "meta" }, `${storeLabel(plan.store.chain, plan.store.storeId, plan.store.name)} · saved ${new Date(plan.updatedAt).toLocaleDateString()}`),
         el("div", { class: "row" }, stars, ratingStatus),
       ),
       el("div", { class: "tiles" },
