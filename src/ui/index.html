@@ -61,6 +61,101 @@ main {
 }
 input, select, textarea, button { font: inherit; color: inherit; }
 
+
+/* Ambient colour behind the glass, so the translucent bars and cards have something to refract */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -10% -10% auto -10%;
+  height: 90vh;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 46% at 12% 14%, rgba(0, 122, 255, 0.30), transparent 70%),
+    radial-gradient(34% 42% at 88% 8%, rgba(255, 45, 146, 0.24), transparent 70%),
+    radial-gradient(42% 48% at 72% 62%, rgba(255, 149, 0, 0.22), transparent 70%),
+    radial-gradient(36% 40% at 20% 78%, rgba(52, 199, 89, 0.18), transparent 70%);
+  filter: blur(24px);
+}
+@media (prefers-color-scheme: dark) {
+  body::before { opacity: 0.9; }
+}
+
+/* Colour themes for icon tiles and hero headers */
+.tone-red { --g1: #ff7a7a; --g2: #ff3b5c; }
+.tone-orange { --g1: #ffc166; --g2: #ff8a1f; }
+.tone-blue { --g1: #64d2ff; --g2: #0a84ff; }
+.tone-green { --g1: #8ee59b; --g2: #2fb457; }
+.tone-purple { --g1: #b9a4ff; --g2: #6d5ae6; }
+.tone-plan { --g1: #5ac8fa; --g2: #5e5ce6; }
+
+.tile-icon {
+  flex: none;
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  background: linear-gradient(145deg, var(--g1), var(--g2));
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--g2) 38%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+.card { display: flex; gap: 14px; align-items: flex-start; }
+.card-body { min-width: 0; flex: 1; }
+.kv { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 6px; font-size: 14px; color: var(--label2); }
+.kv span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; background: var(--dot, var(--label3)); }
+.kv .kcal { --dot: var(--orange); }
+.kv .protein { --dot: var(--blue); }
+.kv .carbs { --dot: var(--green); }
+.kv .fat { --dot: var(--red); }
+.subtitle { margin: 2px 4px 0; color: var(--label2); font-size: 17px; }
+
+/* Hero header on detail screens */
+.hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 30px;
+  padding: 22px 22px 14px;
+  margin-bottom: 14px;
+  color: #fff;
+  background: linear-gradient(150deg, var(--g1), var(--g2));
+  box-shadow: 0 20px 44px color-mix(in srgb, var(--g2) 38%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.hero::before {
+  content: "";
+  position: absolute;
+  right: -50px;
+  top: -70px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0));
+}
+.hero > * { position: relative; }
+.hero .emoji { font-size: 46px; line-height: 1; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.25)); }
+.hero h2 { margin: 10px 0 4px; font-size: 32px; line-height: 1.1; font-weight: 700; letter-spacing: 0.3px; color: #fff; }
+.hero .meta { color: rgba(255, 255, 255, 0.86); }
+.hero .chips .chip { background: rgba(255, 255, 255, 0.26); color: #fff; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.hero .stars button { color: rgba(255, 255, 255, 0.5); }
+.hero .stars button.on { color: #ffe27a; }
+.hero .row { margin: 8px 0; }
+.detail .hero .stars button { color: rgba(255, 255, 255, 0.5); }
+.detail .hero .stars button.on { color: #ffe27a; }
+
+/* Nutrition card */
+.macros { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0 0 6px; }
+.macro { background: var(--surface); border-radius: 20px; padding: 12px 8px; text-align: center; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
+.macro b { display: block; font-size: 22px; line-height: 1.1; font-weight: 700; letter-spacing: -0.3px; color: var(--c); }
+.macro small { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase; color: var(--label2); }
+.macro.kcal { --c: var(--orange); }
+.macro.protein { --c: var(--blue); }
+.macro.carbs { --c: var(--green); }
+.macro.fat { --c: var(--red); }
+.macros-note { margin: 0 4px 4px; color: var(--label2); font-size: 13px; text-align: center; }
+
+.tile .icon { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; font-size: 18px; margin-bottom: 8px; background: linear-gradient(145deg, var(--g1), var(--g2)); }
+.badge { display: inline-grid; place-items: center; min-width: 28px; height: 22px; padding: 0 7px; margin-right: 8px; border-radius: 8px; font-size: 13px; font-weight: 700; letter-spacing: 0; color: #fff; background: linear-gradient(145deg, #64d2ff, #0a84ff); }
+
 /* Large title */
 .largetitle { padding: 12px 4px 10px; }
 h1 { font-size: 34px; line-height: 1.1; font-weight: 700; letter-spacing: 0.37px; margin: 0; }
@@ -116,15 +211,18 @@ h1 { font-size: 34px; line-height: 1.1; font-weight: 700; letter-spacing: 0.37px
   position: relative;
   margin: 4px 0 12px;
 }
+.search { filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.05)); }
 .search svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: var(--label2); pointer-events: none; }
 input[type=search] {
   width: 100%;
   appearance: none;
   border: 0;
   outline: none;
-  background: var(--fill);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   border-radius: 999px;
-  padding: 11px 16px 11px 42px;
+  padding: 12px 16px 12px 44px;
   font-size: 17px;
 }
 input[type=search]::placeholder { color: var(--label2); }
@@ -150,11 +248,14 @@ select {
 /* Cards */
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
 .card {
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
   border-radius: var(--radius);
   padding: 16px 18px;
   cursor: pointer;
-  transition: transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 12px 30px rgba(30, 30, 80, 0.09), 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s;
 }
 .card:active { transform: scale(0.975); }
 .card h2 { font-size: 19px; line-height: 1.2; font-weight: 600; margin: 0 0 6px; letter-spacing: -0.2px; }
@@ -313,7 +414,7 @@ textarea:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 35%, trans
 
 /* Plan summary tiles */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; margin: 16px 0 10px; }
-.tile { background: var(--surface); border-radius: 20px; padding: 14px 16px; }
+.tile { background: var(--surface); border-radius: 22px; padding: 14px 16px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
 .tile .big { font-size: 24px; font-weight: 700; letter-spacing: -0.3px; font-variant-numeric: tabular-nums; }
 .tile .cap { color: var(--label2); font-size: 13px; margin-top: 2px; }
 .pill { display: flex; gap: 8px; align-items: center; border-radius: 16px; padding: 11px 14px; margin: 10px 0; font-size: 15px; font-weight: 500; }
@@ -327,7 +428,7 @@ textarea:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 35%, trans
 /* Shopping list */
 .progress { height: 6px; border-radius: 999px; background: var(--fill); overflow: hidden; margin: 2px 16px 10px; }
 .progress span { display: block; height: 100%; background: var(--green); border-radius: 999px; transition: width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
-.aisle { margin: 18px 0 6px 16px; font-size: 13px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; color: var(--label2); }
+.aisle { display: flex; align-items: center; margin: 18px 0 6px 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; color: var(--label2); }
 .group { background: var(--surface); border-radius: 20px; overflow: hidden; }
 label.line { display: flex; gap: 14px; align-items: center; padding: 12px 16px; cursor: pointer; }
 label.line + label.line { border-top: 1px solid var(--sep); }
@@ -378,7 +479,7 @@ label.line .meta { font-size: 14px; }
 </head>
 <body>
 <main>
-  <header class="largetitle"><h1 id="title">Recipes</h1></header>
+  <header class="largetitle"><h1 id="title">Recipes</h1><p class="subtitle" id="subtitle"></p></header>
 
   <div id="list-view">
     <div class="search">
@@ -470,6 +571,17 @@ const PROTEIN_LABEL = {
   other: "Other",
 };
 
+const PROTEIN_ICON = { white_meat: "🍗", red_meat: "🥩", fish: "🐟", vegetarian: "🥬", other: "🍽️" };
+const PROTEIN_THEME = {
+  white_meat: "tone-orange",
+  red_meat: "tone-red",
+  fish: "tone-blue",
+  vegetarian: "tone-green",
+  other: "tone-purple",
+};
+const themeOf = (recipe) => PROTEIN_THEME[recipe.protein] || "tone-purple";
+const iconOf = (recipe) => PROTEIN_ICON[recipe.protein] || "🍽️";
+
 const PROTEIN_TONE = { white_meat: "orange", red_meat: "red", fish: "blue", vegetarian: "green", other: "" };
 
 function nutritionText(recipe) {
@@ -480,6 +592,26 @@ function nutritionText(recipe) {
     : "";
   const partial = n.partial ? " (some ingredients not counted)" : "";
   return `${n.partial ? "≥ " : ""}${Math.round(n.kcal)} kcal · ${Math.round(n.proteinG)} g protein${macros} / portion${partial}`;
+}
+
+function kvRow(n) {
+  if (!n) return null;
+  const items = [el("span", { class: "kcal" }, `${n.partial ? "≥ " : ""}${Math.round(n.kcal)} kcal`), el("span", { class: "protein" }, `${Math.round(n.proteinG)} g protein`)];
+  if (n.carbsG !== undefined) items.push(el("span", { class: "carbs" }, `${Math.round(n.carbsG)} g carbs`));
+  if (n.fatG !== undefined) items.push(el("span", { class: "fat" }, `${Math.round(n.fatG)} g fat`));
+  return el("div", { class: "kv" }, items);
+}
+
+function macrosCard(n) {
+  if (!n) return null;
+  const cell = (cls, value, label) => el("div", { class: `macro ${cls}` }, el("b", {}, value), el("small", {}, label));
+  const cells = [cell("kcal", `${n.partial ? "≥ " : ""}${Math.round(n.kcal)}`, "kcal"), cell("protein", `${Math.round(n.proteinG)} g`, "protein")];
+  if (n.carbsG !== undefined) cells.push(cell("carbs", `${Math.round(n.carbsG)} g`, "carbs"));
+  if (n.fatG !== undefined) cells.push(cell("fat", `${Math.round(n.fatG)} g`, "fat"));
+  return el("div", {},
+    el("div", { class: "macros", style: `grid-template-columns: repeat(${cells.length}, 1fr)` }, cells),
+    el("div", { class: "macros-note" }, n.partial ? "Per portion · some ingredients not counted" : "Per portion"),
+  );
 }
 
 function matches(recipe, query, tag, protein) {
@@ -536,12 +668,15 @@ function renderList() {
   );
   $("grid").replaceChildren(
     ...shown.map((r) =>
-      el("div", { class: "card", onclick: () => showDetail(r.id) },
-        el("h2", {}, r.name),
-        staticStars(r.rating),
-        el("div", { class: "meta" }, `${r.servings} servings · ${r.ingredients.length} ingredients`),
-        el("div", { class: "meta" }, nutritionText(r)),
-        el("div", { class: "chips" }, badges(r)),
+      el("div", { class: `card ${themeOf(r)}`, onclick: () => showDetail(r.id) },
+        el("div", { class: "tile-icon" }, iconOf(r)),
+        el("div", { class: "card-body" },
+          el("h2", {}, r.name),
+          staticStars(r.rating),
+          el("div", { class: "meta" }, `${r.servings} servings · ${r.ingredients.length} ingredients`),
+          kvRow(r.nutrition),
+          el("div", { class: "chips" }, badges(r)),
+        ),
       ),
     ),
   );
@@ -550,6 +685,7 @@ function renderList() {
   empty.textContent = recipes.length === 0
     ? "No recipes saved yet. Ask Claude to save one."
     : "No recipes match.";
+  $("subtitle").textContent = `${shown.length} ${shown.length === 1 ? "recipe" : "recipes"}`;
 }
 
 function renderTags() {
@@ -638,10 +774,14 @@ function showDetail(id) {
   view.replaceChildren(
     backButton("Recipes", closeDetail),
     el("div", { class: "detail" },
-      el("h2", {}, recipe.name),
-      el("div", { class: "meta" }, nutritionText(recipe)),
-      el("div", { class: "chips" }, badges(recipe)),
-      el("div", { class: "row" }, stars, status),
+      el("div", { class: `hero ${themeOf(recipe)}` },
+        el("div", { class: "emoji" }, iconOf(recipe)),
+        el("h2", {}, recipe.name),
+        el("div", { class: "meta" }, `${recipe.servings} servings · ${recipe.ingredients.length} ingredients`),
+        el("div", { class: "chips" }, badges(recipe)),
+        el("div", { class: "row" }, stars, status),
+      ),
+      macrosCard(recipe.nutrition),
       el("div", { class: "row" }, el("span", { class: "meta" }, "Servings"), stepper(servings)),
       el("h3", {}, "Ingredients"), ingredients,
       recipe.steps.length ? el("h3", {}, "Method") : null,
@@ -678,17 +818,20 @@ function notPricedCount(plan) {
 
 function planCard(plan) {
   const date = new Date(plan.updatedAt).toLocaleDateString();
-  return el("div", { class: "card", onclick: () => showPlan(plan.id) },
-    el("h2", {}, plan.name),
-    staticStars(plan.rating),
-    el("div", { class: "meta" }, `${plan.meals.length} meals · ${date}`),
-    el("div", { class: "price-line" }, `To buy ${euro(plan.toBuy.total)}`),
-    el("div", { class: "chips" },
-      notPricedCount(plan) > 0 ? chip(`${notPricedCount(plan)} not priced`, "orange") : null,
-      plan.balance.balanced ? chip("Balanced", "green") : chip("Needs balance", "orange"),
-      plan.budget !== undefined
-        ? plan.toBuy.total <= plan.budget ? chip("Within budget", "green") : chip("Over budget", "red")
-        : null,
+  return el("div", { class: "card tone-plan", onclick: () => showPlan(plan.id) },
+    el("div", { class: "tile-icon" }, "🗓️"),
+    el("div", { class: "card-body" },
+      el("h2", {}, plan.name),
+      staticStars(plan.rating),
+      el("div", { class: "meta" }, `${plan.meals.length} meals · ${date}`),
+      el("div", { class: "price-line" }, `To buy ${euro(plan.toBuy.total)}`),
+      el("div", { class: "chips" },
+        notPricedCount(plan) > 0 ? chip(`${notPricedCount(plan)} not priced`, "orange") : null,
+        plan.balance.balanced ? chip("Balanced", "green") : chip("Needs balance", "orange"),
+        plan.budget !== undefined
+          ? plan.toBuy.total <= plan.budget ? chip("Within budget", "green") : chip("Over budget", "red")
+          : null,
+      ),
     ),
   );
 }
@@ -698,6 +841,7 @@ function renderPlans() {
   const empty = $("plan-empty");
   empty.classList.toggle("hidden", plans.length > 0);
   empty.textContent = "No meal plans saved yet. Ask Claude to plan a week and save it.";
+  $("subtitle").textContent = `${plans.length} ${plans.length === 1 ? "plan" : "plans"}`;
 }
 
 async function loadPlans() {
@@ -730,8 +874,12 @@ function notPricedSection(plan) {
   );
 }
 
-function tile(big, caption) {
-  return el("div", { class: "tile" }, el("div", { class: "big" }, big), el("div", { class: "cap" }, caption));
+function tile(big, caption, icon, theme) {
+  return el("div", { class: `tile ${theme}` },
+    el("div", { class: "icon" }, icon),
+    el("div", { class: "big" }, big),
+    el("div", { class: "cap" }, caption),
+  );
 }
 
 function showPlan(id) {
@@ -789,7 +937,7 @@ function showPlan(id) {
       el("h3", {}, `${title} · ${euro(list.total)}`),
       groupByAisle(list.lines).map(([aisle, lines]) =>
         el("div", {},
-          el("div", { class: "aisle" }, aisle ? `Aisle ${aisle}` : "Aisle unknown"),
+          el("div", { class: "aisle" }, el("span", { class: "badge" }, aisle || "?"), aisle ? "Aisle" : "Aisle unknown"),
           el("div", { class: "group" }, lines.map(lineRow)),
         ),
       ),
@@ -855,13 +1003,16 @@ function showPlan(id) {
   view.replaceChildren(
     backButton("Meal plans", closePlan),
     el("div", { class: "detail" },
-      el("h2", {}, plan.name),
-      el("div", { class: "meta" }, `${plan.store.chain} store ${plan.store.storeId} · saved ${new Date(plan.updatedAt).toLocaleDateString()}`),
-      el("div", { class: "row" }, stars, ratingStatus),
+      el("div", { class: "hero tone-plan" },
+        el("div", { class: "emoji" }, "🗓️"),
+        el("h2", {}, plan.name),
+        el("div", { class: "meta" }, `${plan.store.chain} store ${plan.store.storeId} · saved ${new Date(plan.updatedAt).toLocaleDateString()}`),
+        el("div", { class: "row" }, stars, ratingStatus),
+      ),
       el("div", { class: "tiles" },
-        tile(euro(plan.toBuy.total), notPricedCount(plan) > 0 ? `To buy + ${notPricedCount(plan)} not priced` : "To buy"),
-        tile(euro(plan.pantry.total), "Pantry check"),
-        avg ? tile(`${avg.kcalPerPortion} kcal`, `${avg.proteinPerPortionG} g protein per portion`) : null,
+        tile(euro(plan.toBuy.total), notPricedCount(plan) > 0 ? `To buy + ${notPricedCount(plan)} not priced` : "To buy", "🛒", "tone-blue"),
+        tile(euro(plan.pantry.total), "Pantry check", "🧂", "tone-orange"),
+        avg ? tile(`${avg.kcalPerPortion} kcal`, `${avg.proteinPerPortionG} g protein per portion`, "🔥", "tone-red") : null,
       ),
       budget,
       plan.balance.balanced
