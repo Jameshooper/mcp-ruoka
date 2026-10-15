@@ -73,6 +73,17 @@ async function saveMealAsRecipe(
 					...(n.source && { source: n.source }),
 				}
 			: undefined;
+	// The price the meal had when the plan was priced, kept with the recipe
+	const estimatedCost = meal.cost
+		? {
+				total: meal.cost.total,
+				perPortion: meal.cost.perPortion,
+				chain: plan.store.chain,
+				storeId: plan.store.storeId,
+				pricedAt: plan.updatedAt,
+				...(meal.cost.complete !== undefined && { complete: meal.cost.complete }),
+			}
+		: undefined;
 	const input: RecipeInput = {
 		name,
 		servings: meal.servings,
@@ -82,6 +93,7 @@ async function saveMealAsRecipe(
 		...(meal.protein && { protein: meal.protein }),
 		...(meal.vegetables !== undefined && { vegetables: meal.vegetables }),
 		...(nutrition && { nutrition }),
+		...(estimatedCost && { estimatedCost }),
 	};
 	const { recipe } = await saveRecipe(input);
 	const updated = await linkMealRecipe(plan.id, mealIndex, recipe.id);

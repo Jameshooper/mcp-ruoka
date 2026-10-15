@@ -114,6 +114,7 @@ const SNAPSHOT = {
 			dish: "Rice bowl",
 			servings: 2,
 			steps: ["Cook"],
+			cost: { total: 1.6, perPortion: 0.8, complete: true },
 			ingredients: [
 				{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" as const } },
 			],
@@ -217,6 +218,15 @@ test("a plan can be rated, and a meal saved as a recipe and linked", async () =>
 	expect(recipe?.servings).toBe(2);
 	expect(recipe?.steps).toEqual(["Cook"]);
 	expect(recipe?.ingredients[0]?.finnish).toEqual(["riisi"]);
+	// the price at the time of the plan stays with the recipe
+	expect(recipe?.estimatedCost).toMatchObject({
+		total: 1.6,
+		perPortion: 0.8,
+		chain: "s-kaupat",
+		storeId: "1",
+		complete: true,
+	});
+	expect(recipe?.estimatedCost?.pricedAt).toBe((await findPlan("rate-me"))?.updatedAt);
 	expect((await findPlan("rate-me"))?.meals[0]?.recipe).toBe("rice-bowl-special");
 
 	// a name that already exists is not replaced unless asked

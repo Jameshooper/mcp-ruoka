@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import * as z from "zod/v4";
 import {
+	EstimatedCostSchema,
 	IngredientSchema,
 	NutritionSchema,
 	ProteinSchema,
@@ -27,6 +28,7 @@ export const RecipeInputSchema = z.object({
 		.optional()
 		.describe("True when the meal includes vegetables or a salad (in the dish or as a side)"),
 	nutrition: NutritionSchema.optional(),
+	estimatedCost: EstimatedCostSchema.optional(),
 	notes: z.string().max(2000).optional(),
 });
 

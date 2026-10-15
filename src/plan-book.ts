@@ -33,6 +33,10 @@ const MealSchema = z.object({
 	vegetables: z.boolean().optional(),
 	nutrition: StoredNutritionSchema.extend({ partial: z.boolean().optional() }).optional(),
 	steps: z.array(z.string()).default([]),
+	// Pro-rata price of the meal when the plan was priced
+	cost: z
+		.object({ total: z.number(), perPortion: z.number(), complete: z.boolean().optional() })
+		.optional(),
 });
 
 const ListSchema = z.object({ total: z.number(), lines: z.array(LineSchema) });

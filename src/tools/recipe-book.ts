@@ -31,7 +31,7 @@ export function registerRecipeBookTools(server: McpServer): void {
 		"save_recipe",
 		{
 			description:
-				"Save a recipe to the personal recipe book so it can be reused later, scaled to any number of servings, and combined into a meal plan. Saving with the same name replaces the earlier version. Ingredient quantities are the TOTAL for the given servings count; include the Finnish search terms so the recipe can be priced without translating again. Always also set `protein` (white_meat, red_meat, fish, vegetarian or other), `vegetables` (true when the meal includes vegetables or a salad) and `nutrition` per portion (kcal and grams of protein, estimated from the ingredients) so weekly plans can be balanced and checked.",
+				"Save a recipe to the personal recipe book so it can be reused later, scaled to any number of servings, and combined into a meal plan. Saving with the same name replaces the earlier version. Ingredient quantities are the TOTAL for the given servings count; include the Finnish search terms so the recipe can be priced without translating again. Always also set `protein` (white_meat, red_meat, fish, vegetarian or other), `vegetables` (true when the meal includes vegetables or a salad) and `nutrition` per portion (kcal and grams of protein, estimated from the ingredients) so weekly plans can be balanced and checked. Also pass estimatedCost exactly as returned by find_recipe_ingredients, so the recipe keeps the price it had when it was created.",
 			inputSchema: RecipeInputSchema,
 		},
 		async (input) => {

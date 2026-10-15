@@ -66,3 +66,29 @@ export const StoredNutritionSchema = NutritionSchema.extend({
 });
 
 export type Nutrition = z.infer<typeof NutritionSchema>;
+
+export const EstimatedCostSchema = z
+	.object({
+		total: z
+			.number()
+			.nonnegative()
+			.describe("EUR for the recipe's servings, pro-rata: only the amounts the recipe uses"),
+		perPortion: z.number().nonnegative(),
+		basketTotal: z
+			.number()
+			.nonnegative()
+			.optional()
+			.describe("EUR for the whole packs to buy, pantry staples excluded"),
+		chain: z.enum(["k-ruoka", "s-kaupat"]),
+		storeId: z.string(),
+		pricedAt: z.string().describe("When the prices were looked up (ISO date)"),
+		complete: z
+			.boolean()
+			.optional()
+			.describe("False when some ingredients could not be priced, so the figure is a lower bound"),
+	})
+	.describe(
+		"Price of the meal when it was created, as returned by find_recipe_ingredients (estimatedCost): pass it through unchanged",
+	);
+
+export type EstimatedCost = z.infer<typeof EstimatedCostSchema>;

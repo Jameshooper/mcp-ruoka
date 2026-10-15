@@ -110,6 +110,7 @@ input, select, textarea, button { font: inherit; color: inherit; }
 .kv .protein { --dot: var(--blue); }
 .kv .carbs { --dot: var(--green); }
 .kv .fat { --dot: var(--red); }
+.kv .cost { --dot: #af52de; color: var(--label); font-weight: 600; }
 .subtitle { margin: 2px 4px 0; color: var(--label2); font-size: 17px; }
 
 /* Hero header on detail screens */
@@ -153,6 +154,10 @@ input, select, textarea, button { font: inherit; color: inherit; }
 .macro.protein { --c: var(--blue); }
 .macro.carbs { --c: var(--green); }
 .macro.fat { --c: var(--red); }
+.pricecard { display: flex; gap: 14px; align-items: center; background: color-mix(in srgb, var(--surface) 72%, transparent); -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); border-radius: 22px; padding: 14px 16px; margin: 8px 0 6px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
+.pricecard .icon { flex: none; width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; font-size: 22px; background: linear-gradient(145deg, #d6a8ff, #af52de); }
+.pricecard .big { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; font-variant-numeric: tabular-nums; }
+.pricecard .cap { color: var(--label2); font-size: 13px; margin-top: 2px; }
 .macros-note { margin: 0 4px 4px; color: var(--label2); font-size: 13px; text-align: center; }
 
 .tile .icon { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; font-size: 18px; margin-bottom: 8px; background: linear-gradient(145deg, var(--g1), var(--g2)); }
@@ -616,9 +621,18 @@ function nutritionText(recipe) {
   return `${n.partial ? "≥ " : ""}${Math.round(n.kcal)} kcal · ${Math.round(n.proteinG)} g protein${macros} / portion${partial}`;
 }
 
-function kvRow(n) {
-  if (!n) return null;
-  const items = [el("span", { class: "kcal" }, `${n.partial ? "≥ " : ""}${Math.round(n.kcal)} kcal`), el("span", { class: "protein" }, `${Math.round(n.proteinG)} g protein`)];
+function costText(cost) {
+  return cost ? `≈ ${euro(cost.perPortion)} / portion${cost.complete === false ? "+" : ""}` : "";
+}
+
+function kvRow(n, cost) {
+  if (!n && !cost) return null;
+  const items = cost ? [el("span", { class: "cost" }, costText(cost))] : [];
+  if (!n) return el("div", { class: "kv" }, items);
+  items.push(
+    el("span", { class: "kcal" }, `${n.partial ? "≥ " : ""}${Math.round(n.kcal)} kcal`),
+    el("span", { class: "protein" }, `${Math.round(n.proteinG)} g protein`),
+  );
   if (n.carbsG !== undefined) items.push(el("span", { class: "carbs" }, `${Math.round(n.carbsG)} g carbs`));
   if (n.fatG !== undefined) items.push(el("span", { class: "fat" }, `${Math.round(n.fatG)} g fat`));
   return el("div", { class: "kv" }, items);
@@ -634,6 +648,31 @@ function macrosCard(n) {
     el("div", { class: "macros", style: `grid-template-columns: repeat(${cells.length}, 1fr)` }, cells),
     el("div", { class: "macros-note" }, n.partial ? "Per portion · some ingredients not counted" : "Per portion"),
   );
+}
+
+const CHAIN_LABEL = { "s-kaupat": "S-Kaupat", "k-ruoka": "K-Ruoka" };
+
+// The price the recipe had when it was created. The total follows the servings stepper, since the
+// pro-rata cost of a meal grows linearly with its portions.
+function priceCard(recipe) {
+  const cost = recipe.estimatedCost;
+  if (!cost) return null;
+  const big = el("div", { class: "big" });
+  const sub = el("div", { class: "cap" });
+  const when = new Date(cost.pricedAt).toLocaleDateString();
+  const update = (servings) => {
+    big.textContent = `≈ ${euro(cost.perPortion)} / portion${cost.complete === false ? "+" : ""}`;
+    sub.textContent = `${euro(cost.perPortion * servings)} for ${servings} · priced ${when} at ${CHAIN_LABEL[cost.chain] || cost.chain} (store ${cost.storeId})`
+      + (cost.complete === false ? " · some ingredients not priced" : "");
+  };
+  update(recipe.servings);
+  return {
+    update,
+    node: el("div", { class: "pricecard" },
+      el("div", { class: "icon" }, "💶"),
+      el("div", {}, big, sub, el("div", { class: "cap" }, "Prices change: this is what it cost when the recipe was created.")),
+    ),
+  };
 }
 
 function matches(recipe, query, tag, protein) {
@@ -696,7 +735,7 @@ function renderList() {
           el("h2", {}, r.name),
           staticStars(r.rating),
           el("div", { class: "meta" }, `${r.servings} servings · ${r.ingredients.length} ingredients`),
-          kvRow(r.nutrition),
+          kvRow(r.nutrition, r.estimatedCost),
           el("div", { class: "chips" }, badges(r)),
         ),
       ),
@@ -765,6 +804,9 @@ function showDetail(id) {
   servings.addEventListener("input", drawIngredients);
   drawIngredients();
 
+  const price = priceCard(recipe);
+  servings.addEventListener("input", () => price?.update(Number(servings.value) || recipe.servings));
+
   const review = el("textarea", { placeholder: "What worked, what to change" });
   review.value = recipe.review || "";
   const status = el("span", { class: "meta" });
@@ -804,6 +846,7 @@ function showDetail(id) {
         el("div", { class: "row" }, stars, status),
       ),
       macrosCard(recipe.nutrition),
+      price ? price.node : null,
       el("div", { class: "row" }, el("span", { class: "meta" }, "Servings"), stepper(servings)),
       el("h3", {}, "Ingredients"), ingredients,
       recipe.steps.length ? el("h3", {}, "Method") : null,
@@ -967,7 +1010,11 @@ function showPlan(id) {
   };
 
   const meals = plan.meals.map((meal, index) => {
-    const info = [`${meal.servings} servings`, nutritionText(meal) || "no nutrition data"].join(" · ");
+    const info = [
+      `${meal.servings} servings`,
+      meal.cost ? costText(meal.cost) : null,
+      nutritionText(meal) || "no nutrition data",
+    ].filter(Boolean).join(" · ");
     const known = meal.recipe && recipes.some((r) => r.id === meal.recipe);
     return el("li", {},
       el("strong", {}, meal.dish || meal.name),

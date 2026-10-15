@@ -92,6 +92,15 @@ test("includeNutrition totals the labels of the chosen products per portion", as
 	// rice 200 g = 716 kcal + butter 20 g = 142.6 kcal
 	expect(out.nutrition.total.kcal).toBe(859);
 	expect(out.nutrition.perPortion).toEqual({ kcal: 430, proteinG: 7.1, carbsG: 79.1, fatG: 9 });
+	// rice 0.8 + mystery 0.4 pro-rata, butter 0.08 pantry; eggs (pieces) cannot be priced
+	expect(out.estimatedCost).toMatchObject({
+		total: 1.28,
+		perPortion: 0.64,
+		basketTotal: 4,
+		chain: "s-kaupat",
+		storeId: "777",
+		complete: false,
+	});
 	expect(out.nutrition.notCounted).toEqual([
 		{ ingredient: "mystery", reason: "no nutrition table on the candidates" },
 		{ ingredient: "eggs", reason: "quantity in pieces: give grams to count it" },

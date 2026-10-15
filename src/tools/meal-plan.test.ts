@@ -384,6 +384,9 @@ test("plans carry calories from the store labels and the method of each meal", a
 
 	const meal = (await findPlan("label-week"))?.meals[0];
 	expect(meal?.steps).toEqual(["Boil the rice", "Serve"]);
+	// rice 200 g at 2.75 EUR/kg for 2 portions; the eggs are not in the store
+	expect(meal?.cost).toEqual({ total: 0.55, perPortion: 0.28, complete: false });
+	expect(out.mealCosts).toEqual([{ meal: "Mon", total: 0.55, perPortion: 0.28, complete: false }]);
 	expect(meal?.nutrition).toEqual({
 		kcal: 358,
 		proteinG: 7,

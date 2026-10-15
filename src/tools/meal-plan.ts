@@ -4,7 +4,7 @@ import { assessBalance, type PlannedMeal, summarizeNutrition } from "../balance.
 import { getProductAllergens, matchAvoidTerms } from "../browser/s-kaupat-allergens.ts";
 import { getProductLocation } from "../browser/s-kaupat-location.ts";
 import { getProductNutrition } from "../browser/s-kaupat-nutrition.ts";
-import { toBase } from "../costing.ts";
+import { costProduct, toBase } from "../costing.ts";
 import {
 	type Macros,
 	macrosFor,
@@ -80,6 +80,8 @@ type ResolvedMeal = Omit<PlannedMeal, "name"> & {
 	steps: string[];
 	dish?: string;
 	recipeId?: string;
+	// What this meal's ingredients cost at the chosen products, pro-rata (only the amounts used)
+	cost?: { total: number; perPortion: number; complete: boolean };
 };
 
 // Explicit fields on the meal override what the saved recipe says
@@ -181,6 +183,31 @@ async function fillMealNutrition(
 			...perPortion,
 			source: "store_data",
 			...(parts.length < quantified && { partial: true }),
+		};
+	}
+}
+
+// Each meal's own price: its ingredient amounts at the unit prices of the products the plan buys.
+// Pooling changes what is bought, not what a meal's food is worth, so this is pro-rata.
+function fillMealCosts(
+	meals: ResolvedMeal[],
+	shopping: Array<{ item: MergedIngredient; choice: PackChoice }>,
+): void {
+	const productByKey = new Map(shopping.map((l) => [l.item.key, l.choice.product]));
+	for (const meal of meals) {
+		let total = 0;
+		let complete = true;
+		for (const ingredient of meal.ingredients) {
+			if (!ingredient.quantity) continue;
+			const product = productByKey.get(mergeKey(ingredient, toBase(ingredient.quantity).dimension));
+			const cost = product ? costProduct(product, ingredient.quantity) : null;
+			if (cost?.status === "ok") total += cost.usedCost;
+			else complete = false;
+		}
+		meal.cost = {
+			total: round2(total),
+			perPortion: round2(total / meal.servings),
+			complete,
 		};
 	}
 }
@@ -336,6 +363,7 @@ export function registerMealPlanTool(server: McpServer): void {
 
 			const shopping = lines.flatMap((l) => (l.choice ? [{ ...l, choice: l.choice }] : []));
 			await fillMealNutrition(resolvedMeals, shopping, chain, storeId, deadline);
+			fillMealCosts(resolvedMeals, shopping);
 			const buy = shopping.filter((l) => !l.item.pantry);
 			const pantry = shopping.filter((l) => l.item.pantry);
 
@@ -391,6 +419,7 @@ export function registerMealPlanTool(server: McpServer): void {
 			const output = {
 				store: { chain, storeId },
 				meals: inputs.map((m) => m.meal),
+				mealCosts: resolvedMeals.map((m) => ({ meal: m.name, ...m.cost })),
 				toBuy: {
 					total: buyTotal,
 					lines: buy.map(lineOutput),
