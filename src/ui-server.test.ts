@@ -254,3 +254,36 @@ test("remembered store names are served for display", async () => {
 		.parse(await (await handleUiRequest(new Request("http://x/api/stores"))).json());
 	expect(body.names["s-kaupat:613756972"]).toBe("Prisma Linnainmaa");
 });
+
+test("serves the app manifest and only the listed icons", async () => {
+	const { handleUiRequest } = await import("./ui-server.ts");
+	const manifest = z
+		.object({
+			display: z.string(),
+			start_url: z.string(),
+			icons: z.array(z.object({ src: z.string() })),
+		})
+		.parse(await (await handleUiRequest(new Request("http://x/manifest.webmanifest"))).json());
+	expect(manifest.display).toBe("standalone");
+	expect(manifest.start_url).toBe("./");
+
+	const icon = await handleUiRequest(new Request("http://x/icons/apple-touch-icon.png"));
+	expect(icon.status).toBe(200);
+	expect(icon.headers.get("content-type")).toContain("image/png");
+	for (const bad of ["/icons/secret.png", "/icons/..%2findex.html", "/icons/icon-192.png/extra"]) {
+		expect((await handleUiRequest(new Request(`http://x${bad}`))).status).toBe(404);
+	}
+});
+
+test("the standalone listener only admits allowed Tailscale logins", async () => {
+	const { isAllowedTailnetUser } = await import("./ui-server.ts");
+	const allowed = ["james@example.com"];
+	expect(
+		isAllowedTailnetUser(new Headers({ "Tailscale-User-Login": "James@Example.com" }), allowed),
+	).toBe(true);
+	expect(
+		isAllowedTailnetUser(new Headers({ "Tailscale-User-Login": "other@example.com" }), allowed),
+	).toBe(false);
+	expect(isAllowedTailnetUser(new Headers(), allowed)).toBe(false);
+	expect(isAllowedTailnetUser(new Headers({ "Tailscale-User-Login": "" }), allowed)).toBe(false);
+});

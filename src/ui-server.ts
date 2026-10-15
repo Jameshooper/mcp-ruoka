@@ -20,7 +20,28 @@ import {
 } from "./recipe-book.ts";
 import { getStoreNames } from "./store-names.ts";
 
-const indexPath = join(import.meta.dirname, "ui", "index.html");
+const uiDir = join(import.meta.dirname, "ui");
+const indexPath = join(uiDir, "index.html");
+
+// Home-screen app description. URLs are relative so it works behind Home Assistant's ingress
+// prefix as well as at the root of the standalone address.
+const MANIFEST = {
+	name: "Ruoka",
+	short_name: "Ruoka",
+	description: "Recipes, meal plans and shopping lists",
+	start_url: "./",
+	scope: "./",
+	display: "standalone",
+	background_color: "#f4f1ec",
+	theme_color: "#f4f1ec",
+	icons: [
+		{ src: "icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
+		{ src: "icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
+	],
+};
+
+// Only these icon files are served, so a path can never reach anything else on disk
+const ICON_RE = /^\/icons\/(apple-touch-icon\.png|icon-192\.png|icon-512\.png|icon\.svg)$/;
 
 const SaveMealBodySchema = z.object({
 	name: z.string().min(1).max(120).optional(),
@@ -117,6 +138,18 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 		return json({ recipes: await listRecipes() });
 	}
 
+	if (req.method === "GET" && path === "/manifest.webmanifest") {
+		return new Response(JSON.stringify(MANIFEST), {
+			headers: { "Content-Type": "application/manifest+json", "Cache-Control": "no-cache" },
+		});
+	}
+
+	if (req.method === "GET" && ICON_RE.test(path)) {
+		return new Response(Bun.file(join(uiDir, path)), {
+			headers: { "Cache-Control": "public, max-age=86400" },
+		});
+	}
+
 	if (path === "/api/stores" && req.method === "GET") {
 		return json({ names: await getStoreNames() });
 	}
@@ -199,6 +232,39 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 
 // Home Assistant's ingress proxy always connects from this address; everything else is refused
 const INGRESS_ADDRESS = "172.30.32.2";
+
+// Behind `tailscale serve`, requests from tailnet members carry the sender's login in a header that
+// Tailscale sets itself (and strips from anything the client sends); Funnel traffic has none. The
+// listener is bound to localhost so nothing but the Tailscale proxy can reach it.
+export function isAllowedTailnetUser(headers: Headers, allowedLogins: string[]): boolean {
+	const login = headers.get("tailscale-user-login")?.trim().toLowerCase();
+	return !!login && allowedLogins.includes(login);
+}
+
+export function startStandaloneUi(port: number, allowedLogins: string[]): void {
+	const allowed = allowedLogins.map((l) => l.trim().toLowerCase()).filter(Boolean);
+	if (allowed.length === 0) {
+		logger.warn("Standalone recipe app disabled: no allowed Tailscale login");
+		return;
+	}
+	Bun.serve({
+		hostname: "127.0.0.1",
+		port,
+		async fetch(req) {
+			if (!isAllowedTailnetUser(req.headers, allowed)) {
+				logger.warn("Refused standalone recipe app request without an allowed Tailscale login");
+				return new Response("Forbidden", { status: 403 });
+			}
+			try {
+				return await handleUiRequest(req);
+			} catch (error) {
+				logger.error({ err: error }, "Recipe app request failed");
+				return json({ error: "Server error" }, 500);
+			}
+		},
+	});
+	logger.info({ port }, "Standalone recipe app listening (Tailscale only)");
+}
 
 export function startUiServer(port: number): void {
 	Bun.serve({

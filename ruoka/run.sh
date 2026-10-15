@@ -13,6 +13,7 @@ OAUTH_CLIENT_SECRET="$(opt oauth_client_secret)"
 # Pasted keys often carry stray whitespace or quotes
 TS_AUTH_KEY="$(opt tailscale_auth_key | tr -d '[:space:]"' | tr -d "'")"
 TS_HOSTNAME="$(opt tailscale_hostname)"
+UI_ALLOWED_LOGINS="$(opt ui_allowed_logins | tr -d '[:space:]')"
 
 # The published port is reachable from the whole LAN, so never run it open
 if [ -z "$MCP_AUTH_TOKEN" ] && { [ -z "$OAUTH_CLIENT_ID" ] || [ -z "$OAUTH_CLIENT_SECRET" ]; }; then
@@ -39,6 +40,16 @@ if [ -n "$TS_AUTH_KEY" ]; then
   tailscale funnel --bg 3001
   tailscale funnel status
 
+  # The standalone recipe app: tailnet members only (plain serve, not Funnel), on port 8443. The
+  # node's owner is allowed unless ui_allowed_logins lists others.
+  # Failures here must not stop the MCP server itself, so they only warn.
+  tailscale serve --bg --https=8443 http://127.0.0.1:3003 || echo "Could not publish the standalone recipe app on port 8443" >&2
+  tailscale serve status || true
+  if [ -z "$UI_ALLOWED_LOGINS" ]; then
+    UI_ALLOWED_LOGINS="$(tailscale status --json | jq -r '.User[(.Self.UserID | tostring)].LoginName // empty' || true)"
+  fi
+  echo "Standalone recipe app: https://$(tailscale status --json | jq -r '.Self.DNSName | rtrimstr(".")' || true):8443 (allowed: ${UI_ALLOWED_LOGINS:-nobody})"
+
   # Funnel only gets a public address when the tailnet policy grants this node the "funnel" attribute
   echo "Tailscale node: $(tailscale status --json | jq -c '{DNSName: .Self.DNSName, Online: .Self.Online, Attributes: ((.Self.CapMap // {}) | keys)}')"
 else
@@ -50,5 +61,9 @@ export BROWSER_DATA_DIR=/data/browser
 export RUOKA_DATA_DIR=/data
 # Served only through Home Assistant ingress; the Funnel proxies port 3001 alone
 export RUOKA_UI_PORT=3002
+if [ -n "$TS_AUTH_KEY" ]; then
+  export RUOKA_UI_STANDALONE_PORT=3003
+  export RUOKA_UI_ALLOWED_LOGINS="$UI_ALLOWED_LOGINS"
+fi
 cd /app
 exec bun run src/index.ts

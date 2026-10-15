@@ -1,5 +1,5 @@
 name: Ruoka MCP
-version: "0.12.0"
+version: "0.13.0"
 slug: ruoka
 description: MCP server for Finnish grocery and alcohol search (K-Ruoka, S-Kaupat, Alko), exposed to Claude via Tailscale Funnel
 url: https://github.com/Jameshooper/mcp-ruoka
@@ -22,9 +22,11 @@ options:
   oauth_client_secret: ""
   tailscale_auth_key: ""
   tailscale_hostname: ruoka
+  ui_allowed_logins: ""
 schema:
   mcp_auth_token: password?
   oauth_client_id: password?
   oauth_client_secret: password?
   tailscale_auth_key: password?
   tailscale_hostname: str?
+  ui_allowed_logins: str?

@@ -24,7 +24,7 @@ import { registerRecipeTool } from "./tools/recipe.ts";
 import { registerRecipeBookTools } from "./tools/recipe-book.ts";
 import { registerSearchTool } from "./tools/search.ts";
 import { registerStoresTool } from "./tools/stores.ts";
-import { startUiServer } from "./ui-server.ts";
+import { startStandaloneUi, startUiServer } from "./ui-server.ts";
 
 const logoPath = join(import.meta.dirname, "..", "logo.png");
 const logoDataUri = `data:image/png;base64,${Buffer.from(await Bun.file(logoPath).arrayBuffer()).toString("base64")}`;
@@ -65,6 +65,10 @@ if (process.argv.includes("--stdio")) {
 function startHttpServer() {
 	const uiPort = Number(process.env.RUOKA_UI_PORT);
 	if (uiPort > 0) startUiServer(uiPort);
+	const standalonePort = Number(process.env.RUOKA_UI_STANDALONE_PORT);
+	if (standalonePort > 0) {
+		startStandaloneUi(standalonePort, (process.env.RUOKA_UI_ALLOWED_LOGINS ?? "").split(","));
+	}
 
 	interface TrackedTransport {
 		transport: WebStandardStreamableHTTPServerTransport;
