@@ -21,7 +21,10 @@
   --red: #ff3b30;
   --yellow: #ffcc00;
   --glass: rgba(255, 255, 255, 0.64);
-  --glass-edge: rgba(255, 255, 255, 0.7);
+  --glass-hi: rgba(255, 255, 255, 0.52);
+  --glass-lo: rgba(255, 255, 255, 0.22);
+  --glass-spec: rgba(255, 255, 255, 0.95);
+  --glass-edge: rgba(255, 255, 255, 0.55);
   --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.14), 0 1px 0 rgba(255, 255, 255, 0.6) inset;
   --radius: 22px;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
@@ -41,7 +44,10 @@
     --red: #ff453a;
     --yellow: #ffd60a;
     --glass: rgba(44, 44, 46, 0.58);
-    --glass-edge: rgba(255, 255, 255, 0.14);
+    --glass-hi: rgba(255, 255, 255, 0.16);
+    --glass-lo: rgba(255, 255, 255, 0.04);
+    --glass-spec: rgba(255, 255, 255, 0.38);
+    --glass-edge: rgba(255, 255, 255, 0.18);
     --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.1) inset;
   }
 }
@@ -62,24 +68,20 @@ main {
 input, select, textarea, button { font: inherit; color: inherit; }
 
 
-/* Ambient colour behind the glass, so the translucent bars and cards have something to refract */
-body::before {
-  content: "";
-  position: fixed;
-  inset: -10% -10% auto -10%;
-  height: 90vh;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(38% 46% at 12% 14%, rgba(0, 122, 255, 0.30), transparent 70%),
-    radial-gradient(34% 42% at 88% 8%, rgba(255, 45, 146, 0.24), transparent 70%),
-    radial-gradient(42% 48% at 72% 62%, rgba(255, 149, 0, 0.22), transparent 70%),
-    radial-gradient(36% 40% at 20% 78%, rgba(52, 199, 89, 0.18), transparent 70%);
-  filter: blur(24px);
-}
-@media (prefers-color-scheme: dark) {
-  body::before { opacity: 0.9; }
-}
+/* Colour orbs behind the glass. They are fixed, so cards and bars slide over them as you scroll,
+   which is what makes the blur, tint and edge highlights visible. */
+.orbs { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.orbs span { position: absolute; border-radius: 50%; will-change: transform; }
+.orbs .o1 { width: 62vmax; height: 62vmax; left: -22vmax; top: -18vmax; background: radial-gradient(circle at 40% 40%, #2f8cff 0%, rgba(47, 140, 255, 0.55) 45%, rgba(47, 140, 255, 0) 70%); animation: drift1 26s ease-in-out infinite alternate; }
+.orbs .o2 { width: 54vmax; height: 54vmax; right: -20vmax; top: 6vmax; background: radial-gradient(circle at 50% 50%, #ff3d96 0%, rgba(255, 61, 150, 0.5) 45%, rgba(255, 61, 150, 0) 70%); animation: drift2 32s ease-in-out infinite alternate; }
+.orbs .o3 { width: 58vmax; height: 58vmax; left: 8vmax; bottom: -26vmax; background: radial-gradient(circle at 50% 50%, #ffa21f 0%, rgba(255, 162, 31, 0.5) 45%, rgba(255, 162, 31, 0) 70%); animation: drift3 30s ease-in-out infinite alternate; }
+.orbs .o4 { width: 40vmax; height: 40vmax; right: -8vmax; bottom: 10vmax; background: radial-gradient(circle at 50% 50%, #35d27a 0%, rgba(53, 210, 122, 0.45) 45%, rgba(53, 210, 122, 0) 70%); animation: drift2 38s ease-in-out infinite alternate-reverse; }
+.orbs { opacity: 0.55; }
+@media (prefers-color-scheme: dark) { .orbs { opacity: 0.8; } }
+@keyframes drift1 { to { transform: translate(14vmax, 10vmax) scale(1.1); } }
+@keyframes drift2 { to { transform: translate(-12vmax, 14vmax) scale(0.92); } }
+@keyframes drift3 { to { transform: translate(10vmax, -12vmax) scale(1.08); } }
+@media (prefers-reduced-motion: reduce) { .orbs span { animation: none !important; } }
 
 /* Colour themes for icon tiles and hero headers */
 .tone-red { --g1: #ff7a7a; --g2: #ff3b5c; }
@@ -144,7 +146,7 @@ body::before {
 
 /* Nutrition card */
 .macros { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0 0 6px; }
-.macro { background: var(--surface); border-radius: 20px; padding: 12px 8px; text-align: center; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
+.macro { background: color-mix(in srgb, var(--surface) 72%, transparent); -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); border-radius: 20px; padding: 12px 8px; text-align: center; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
 .macro b { display: block; font-size: 22px; line-height: 1.1; font-weight: 700; letter-spacing: -0.3px; color: var(--c); }
 .macro small { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase; color: var(--label2); }
 .macro.kcal { --c: var(--orange); }
@@ -162,11 +164,17 @@ h1 { font-size: 34px; line-height: 1.1; font-weight: 700; letter-spacing: 0.37px
 
 /* Liquid-glass material: translucent, blurred, with a soft specular edge */
 .glass {
-  background: var(--glass);
-  -webkit-backdrop-filter: blur(26px) saturate(180%);
-  backdrop-filter: blur(26px) saturate(180%);
+  position: relative;
+  background: linear-gradient(160deg, var(--glass-hi), var(--glass-lo));
+  -webkit-backdrop-filter: blur(30px) saturate(210%) brightness(1.04);
+  backdrop-filter: blur(30px) saturate(210%) brightness(1.04);
   border: 1px solid var(--glass-edge);
-  box-shadow: var(--glass-shadow);
+  box-shadow:
+    0 14px 40px rgba(20, 20, 60, 0.22),
+    0 2px 6px rgba(0, 0, 0, 0.08),
+    inset 0 1.5px 1px var(--glass-spec),
+    inset 0 -1px 2px rgba(255, 255, 255, 0.18),
+    inset 0 0 14px rgba(255, 255, 255, 0.10);
 }
 @media (prefers-reduced-transparency: reduce) {
   .glass { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
@@ -180,7 +188,7 @@ h1 { font-size: 34px; line-height: 1.1; font-weight: 700; letter-spacing: 0.37px
   transform: translateX(-50%);
   display: flex;
   gap: 4px;
-  padding: 6px;
+  padding: 7px;
   border-radius: 999px;
   z-index: 10;
 }
@@ -203,7 +211,14 @@ h1 { font-size: 34px; line-height: 1.1; font-weight: 700; letter-spacing: 0.37px
   transition: background 0.2s, color 0.2s, transform 0.15s;
 }
 .tabbar button svg { width: 26px; height: 26px; }
-.tabbar button.active { background: color-mix(in srgb, var(--blue) 16%, transparent); color: var(--blue); }
+.tabbar button.active {
+  color: var(--blue);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.4));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14), inset 0 1.5px 1px #fff, inset 0 -1px 2px rgba(255, 255, 255, 0.4);
+}
+@media (prefers-color-scheme: dark) {
+  .tabbar button.active { background: linear-gradient(160deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.08)); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1.5px 1px rgba(255, 255, 255, 0.4); }
+}
 .tabbar button:active { transform: scale(0.96); }
 
 /* Search + filters */
@@ -248,13 +263,19 @@ select {
 /* Cards */
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
 .card {
-  background: color-mix(in srgb, var(--surface) 80%, transparent);
-  -webkit-backdrop-filter: blur(22px) saturate(170%);
-  backdrop-filter: blur(22px) saturate(170%);
+  position: relative;
+  background: linear-gradient(160deg, var(--glass-hi), var(--glass-lo)), color-mix(in srgb, var(--surface) 38%, transparent);
+  -webkit-backdrop-filter: blur(26px) saturate(190%);
+  backdrop-filter: blur(26px) saturate(190%);
+  border: 1px solid var(--glass-edge);
   border-radius: var(--radius);
   padding: 16px 18px;
   cursor: pointer;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 12px 30px rgba(30, 30, 80, 0.09), 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow:
+    0 12px 34px rgba(30, 30, 80, 0.14),
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    inset 0 1.5px 1px var(--glass-spec),
+    inset 0 -1px 2px rgba(255, 255, 255, 0.16);
   transition: transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s;
 }
 .card:active { transform: scale(0.975); }
@@ -356,7 +377,7 @@ li button { margin-top: 8px; }
 }
 
 /* Grouped lists */
-ul.ing { list-style: none; margin: 0; padding: 0; background: var(--surface); border-radius: 20px; overflow: hidden; }
+ul.ing { list-style: none; margin: 0; padding: 0; background: color-mix(in srgb, var(--surface) 72%, transparent); -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); border-radius: 20px; overflow: hidden; }
 ul.ing li { padding: 12px 16px; display: block; }
 ul.ing li + li { border-top: 1px solid var(--sep); }
 ul.ing li.pantry .name { color: var(--label2); }
@@ -370,7 +391,7 @@ details summary::-webkit-details-marker { display: none; }
 details summary::after { content: " ›"; }
 details[open] summary::after { content: " ⌄"; }
 
-ol.steps { list-style: none; counter-reset: step; margin: 0; padding: 0; background: var(--surface); border-radius: 20px; overflow: hidden; }
+ol.steps { list-style: none; counter-reset: step; margin: 0; padding: 0; background: color-mix(in srgb, var(--surface) 72%, transparent); -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); border-radius: 20px; overflow: hidden; }
 ul.ing ol.steps { background: transparent; border-radius: 0; margin-top: 6px; }
 ol.steps li { counter-increment: step; position: relative; padding: 12px 16px 12px 52px; }
 ol.steps li + li { border-top: 1px solid var(--sep); }
@@ -414,7 +435,7 @@ textarea:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 35%, trans
 
 /* Plan summary tiles */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; margin: 16px 0 10px; }
-.tile { background: var(--surface); border-radius: 22px; padding: 14px 16px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
+.tile { background: color-mix(in srgb, var(--surface) 72%, transparent); -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); border-radius: 22px; padding: 14px 16px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
 .tile .big { font-size: 24px; font-weight: 700; letter-spacing: -0.3px; font-variant-numeric: tabular-nums; }
 .tile .cap { color: var(--label2); font-size: 13px; margin-top: 2px; }
 .pill { display: flex; gap: 8px; align-items: center; border-radius: 16px; padding: 11px 14px; margin: 10px 0; font-size: 15px; font-weight: 500; }
@@ -429,7 +450,7 @@ textarea:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 35%, trans
 .progress { height: 6px; border-radius: 999px; background: var(--fill); overflow: hidden; margin: 2px 16px 10px; }
 .progress span { display: block; height: 100%; background: var(--green); border-radius: 999px; transition: width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .aisle { display: flex; align-items: center; margin: 18px 0 6px 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; color: var(--label2); }
-.group { background: var(--surface); border-radius: 20px; overflow: hidden; }
+.group { background: color-mix(in srgb, var(--surface) 72%, transparent); -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); border-radius: 20px; overflow: hidden; }
 label.line { display: flex; gap: 14px; align-items: center; padding: 12px 16px; cursor: pointer; }
 label.line + label.line { border-top: 1px solid var(--sep); }
 label.line input {
@@ -478,6 +499,7 @@ label.line .meta { font-size: 14px; }
 </style>
 </head>
 <body>
+<div class="orbs" aria-hidden="true"><span class="o1"></span><span class="o2"></span><span class="o3"></span><span class="o4"></span></div>
 <main>
   <header class="largetitle"><h1 id="title">Recipes</h1><p class="subtitle" id="subtitle"></p></header>
 
