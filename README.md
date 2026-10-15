@@ -20,6 +20,8 @@ Unofficial MCP server for searching Finnish grocery and alcohol products across 
 
 ### Recipes panel (Home Assistant)
 
+The panel follows current iOS design: SF system font, large titles, inset grouped lists, a floating translucent "glass" tab bar, capsule filters and buttons, round tick boxes, and automatic light and dark mode (with reduced motion and transparency respected).
+
 The Home Assistant app adds a **Recipes** entry to the sidebar (Home Assistant ingress). It lists the saved recipes with search over names, ingredients and tags, tag filter and sorting, shows a recipe with its ingredients scaled to any number of servings, and shows calories and protein per portion with protein-type and vegetable badges (and a protein filter), and lets you rate it, write a review or delete it. A second tab lists the saved **Meal plans**: each opens to the meals (with a link to the recipe), budget and balance status, and the shopping list grouped by aisle with tick boxes that are saved, so the list survives closing the page and works across your phone and computer. The panel is served on its own port (`RUOKA_UI_PORT`, 3002) that is neither published nor proxied by the Funnel, and it only accepts connections from Home Assistant's ingress proxy, so it is reachable only to logged-in Home Assistant users.
 
 ## Install as Claude Code plugin
