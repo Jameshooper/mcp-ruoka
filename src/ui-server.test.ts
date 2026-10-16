@@ -287,3 +287,34 @@ test("the standalone listener only admits allowed Tailscale logins", async () =>
 	expect(isAllowedTailnetUser(new Headers(), allowed)).toBe(false);
 	expect(isAllowedTailnetUser(new Headers({ "Tailscale-User-Login": "" }), allowed)).toBe(false);
 });
+
+test("the config endpoint gives the buttons that open Claude their defaults", async () => {
+	const { handleUiRequest } = await import("./ui-server.ts");
+	const Config = z.object({
+		defaultStore: z
+			.object({ chain: z.string(), id: z.string(), name: z.string().nullable() })
+			.nullable(),
+		promptNote: z.string(),
+	});
+	delete process.env.RUOKA_DEFAULT_STORE_ID;
+	expect(
+		Config.parse(await (await handleUiRequest(new Request("http://x/api/config"))).json())
+			.defaultStore,
+	).toBeNull();
+
+	process.env.RUOKA_DEFAULT_STORE_ID = "613756972";
+	process.env.RUOKA_DEFAULT_STORE_NAME = "Prisma Linnainmaa";
+	process.env.RUOKA_CLAUDE_NOTE = "Avoid cashew.";
+	const config = Config.parse(
+		await (await handleUiRequest(new Request("http://x/api/config"))).json(),
+	);
+	expect(config.defaultStore).toEqual({
+		chain: "s-kaupat",
+		id: "613756972",
+		name: "Prisma Linnainmaa",
+	});
+	expect(config.promptNote).toBe("Avoid cashew.");
+	delete process.env.RUOKA_DEFAULT_STORE_ID;
+	delete process.env.RUOKA_DEFAULT_STORE_NAME;
+	delete process.env.RUOKA_CLAUDE_NOTE;
+});

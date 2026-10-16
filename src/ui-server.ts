@@ -150,6 +150,18 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 		});
 	}
 
+	if (path === "/api/config" && req.method === "GET") {
+		// Defaults the buttons that open Claude put into their messages, since a new chat does not
+		// carry the project instructions
+		const id = process.env.RUOKA_DEFAULT_STORE_ID;
+		return json({
+			defaultStore: id
+				? { chain: "s-kaupat", id, name: process.env.RUOKA_DEFAULT_STORE_NAME ?? null }
+				: null,
+			promptNote: process.env.RUOKA_CLAUDE_NOTE ?? "",
+		});
+	}
+
 	if (path === "/api/stores" && req.method === "GET") {
 		return json({ names: await getStoreNames() });
 	}

@@ -22,6 +22,10 @@ Unofficial MCP server for searching Finnish grocery and alcohol products across 
 
 The panel is also served as a standalone web app at `https://<hostname>.<tailnet>.ts.net:8443`, through `tailscale serve` (private to your tailnet, not Funnel) to a listener bound to localhost (`RUOKA_UI_STANDALONE_PORT`, 3003). Only the Tailscale login of the node's owner is let in (`Tailscale-User-Login`, set by Tailscale itself; add others with the `ui_allowed_logins` option). Open it in Safari and use Share, then Add to Home Screen: it gets its own Ruoka icon and opens full screen. Your tailnet policy must allow `tcp:8443` to the node. Icons are rendered from `src/ui/icons/icon.svg` with `CHROMIUM_PATH=... bun scripts/make-icons.ts`.
 
+### Cook with Claude / Shop with Claude
+
+Recipe and plan screens have buttons that open a new Claude chat with a ready-made message (`https://claude.ai/new?q=...`; a "Copy message" link is the fallback). "Cook with Claude" asks for an interactive cooking card with an ingredient checklist and step-by-step timers; "Shop with Claude" asks for the shopping list grouped by aisle for the default store. Because a new chat does not carry project instructions, the message names the store and tool arguments and appends `claude_prompt_note` (the app options `default_store_id`, `default_store_name` and `claude_prompt_note`). No API key or extra cost: it uses your normal Claude app and the Ruoka connector.
+
 ### Recipes panel (Home Assistant)
 
 The panel uses an iOS-style layout (large titles, inset grouped lists, a floating translucent tab bar, capsule controls) in a calm, warm palette with a serif for headings and a single terracotta accent, inset grouped lists, a floating translucent "glass" tab bar, capsule filters and buttons, round tick boxes, and automatic light and dark mode (with reduced motion and transparency respected).

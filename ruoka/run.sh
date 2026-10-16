@@ -14,6 +14,9 @@ OAUTH_CLIENT_SECRET="$(opt oauth_client_secret)"
 TS_AUTH_KEY="$(opt tailscale_auth_key | tr -d '[:space:]"' | tr -d "'")"
 TS_HOSTNAME="$(opt tailscale_hostname)"
 UI_ALLOWED_LOGINS="$(opt ui_allowed_logins | tr -d '[:space:]')"
+RUOKA_DEFAULT_STORE_ID="$(opt default_store_id | tr -d '[:space:]')"
+RUOKA_DEFAULT_STORE_NAME="$(opt default_store_name)"
+RUOKA_CLAUDE_NOTE="$(opt claude_prompt_note)"
 
 # The published port is reachable from the whole LAN, so never run it open
 if [ -z "$MCP_AUTH_TOKEN" ] && { [ -z "$OAUTH_CLIENT_ID" ] || [ -z "$OAUTH_CLIENT_SECRET" ]; }; then
@@ -60,6 +63,7 @@ export MCP_AUTH_TOKEN OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET
 export BROWSER_DATA_DIR=/data/browser
 export RUOKA_DATA_DIR=/data
 # Served only through Home Assistant ingress; the Funnel proxies port 3001 alone
+export RUOKA_DEFAULT_STORE_ID RUOKA_DEFAULT_STORE_NAME RUOKA_CLAUDE_NOTE
 export RUOKA_UI_PORT=3002
 if [ -n "$TS_AUTH_KEY" ]; then
   export RUOKA_UI_STANDALONE_PORT=3003

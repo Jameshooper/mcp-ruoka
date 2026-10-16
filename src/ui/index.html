@@ -349,6 +349,24 @@ button.btn, .detail button:not(.step), .navbar button, li button {
 .detail .stars button.on { color: var(--yellow); }
 li button { margin-top: 8px; }
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 14px 0; }
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  transition: transform 0.15s;
+}
+a.btn:active { transform: scale(0.96); }
+a.btn.primary { background: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) { a.btn.primary { color: #2b1a12; } }
+.detail button.linkbtn { appearance: none; border: 0; background: none; border-radius: 0; font-weight: 500; padding: 6px 4px; color: var(--label2); font-size: 14px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.claude-row { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin: 14px 0 4px; }
 
 /* Navigation bar with back button */
 .navbar {
@@ -678,6 +696,89 @@ function storeLabel(chain, id, name) {
   return name || storeNames[`${chain}:${id}`] || `${CHAIN_LABEL[chain] || chain} store ${id}`;
 }
 
+
+let config = { defaultStore: null, promptNote: "" };
+
+// A new Claude chat does not carry the project's instructions, so each message spells out the
+// store and the rules, and tells Claude which Ruoka tool fetches the saved item.
+function storeText(store) {
+  if (!store) return "my usual store";
+  const name = store.name || storeNames[`${store.chain}:${store.id}`];
+  return name ? `${name} (S-Kaupat store ${store.id})` : `S-Kaupat store ${store.id}`;
+}
+
+function storeParams(store) {
+  if (!store) return "";
+  const name = store.name || storeNames[`${store.chain}:${store.id}`];
+  return `storeId ${store.id}${name ? `, storeName "${name}"` : ""}, includeLocation: true`;
+}
+
+function withNote(text) {
+  return config.promptNote ? `${text}\n\n${config.promptNote}` : text;
+}
+
+function cookPrompt(name, servings, source) {
+  return withNote(
+    `Cook with me: "${name}" for ${servings} people.\n\n${source} Make an interactive recipe card I can cook from: an ingredient checklist at ${servings} servings, then the method as numbered steps with a timer for every step that has a time. Show one step at a time and wait for me before the next one. Start with anything I should prep first.`,
+  );
+}
+
+function recipeCookPrompt(recipe, servings) {
+  return cookPrompt(recipe.name, servings, `Use get_recipe on my Ruoka recipe "${recipe.id}" with servings ${servings}.`);
+}
+
+function recipeShopPrompt(recipe, servings) {
+  const store = config.defaultStore || (recipe.estimatedCost && { chain: recipe.estimatedCost.chain, id: recipe.estimatedCost.storeId, name: recipe.estimatedCost.storeName });
+  return withNote(
+    `Shop with me for "${recipe.name}" at ${servings} servings in ${storeText(store)}.\n\nUse get_recipe "${recipe.id}" for the ingredients and their Finnish search terms, then find_recipe_ingredients (${storeParams(store)}, servings ${servings}) with the quantities scaled to ${servings} servings. Make a shopping checklist grouped by aisle, lowest aisle number first, so I can walk the store in order: product, packs, price and aisle or floor. Keep pantry staples in a separate "Pantry check" section and finish with the totals. Do not save or change any recipe.`,
+  );
+}
+
+function planShopPrompt(plan) {
+  const store = { chain: plan.store.chain, id: plan.store.storeId, name: plan.store.name };
+  const saved = new Date(plan.updatedAt).toLocaleDateString();
+  return withNote(
+    `Shop with me: my meal plan "${plan.name}" at ${storeText(store)}.\n\nUse get_meal_plan "${plan.id}" for the saved shopping list (priced ${saved}). Make an interactive shopping checklist grouped by aisle, lowest aisle number first, so I can walk the store in order: product, packs, price and aisle or floor. Keep pantry staples in a separate "Pantry check" section, flag anything that was not priced, and give the totals. If the plan is more than a few days old, re-check prices and aisles with plan_meals (same meals, ${storeParams(store)}) and tell me what changed. Do not save or replace the plan unless I ask.`,
+  );
+}
+
+function mealCookPrompt(meal, known) {
+  if (known) return cookPrompt(meal.dish || meal.name, meal.servings, `Use get_recipe on my Ruoka recipe "${meal.recipe}" with servings ${meal.servings}.`);
+  const ingredients = (meal.ingredients || []).map((i) => [i.quantity ? `${i.quantity.amount} ${i.quantity.unit}` : "", i.english].filter(Boolean).join(" ")).join(", ");
+  const steps = (meal.steps || []).map((step, n) => `${n + 1}. ${step}`).join(" ");
+  return cookPrompt(meal.dish || meal.name, meal.servings, `Ingredients for ${meal.servings}: ${ingredients}. Method: ${steps}.`);
+}
+
+const claudeLink = (text) => `https://claude.ai/new?q=${encodeURIComponent(text)}`;
+
+// Opens a new Claude chat with the message filled in. Copying is the fallback when the link does
+// not pre-fill the message on a device.
+function claudeActions(items) {
+  const note = el("span", { class: "meta" });
+  return el("div", { class: "claude-row" },
+    items.map(({ label, text, primary }) => {
+      const link = el("a", { class: primary ? "btn primary" : "btn", href: claudeLink(text()), target: "_blank", rel: "noopener" }, label);
+      // The message is built when tapped, so it reflects the servings chosen at that moment
+      link.addEventListener("click", () => link.setAttribute("href", claudeLink(text())));
+      return link;
+    }),
+    el("button", { type: "button", class: "linkbtn", onclick: async () => {
+      try {
+        await navigator.clipboard.writeText(items[0].text());
+        note.textContent = "Message copied";
+      } catch {
+        note.textContent = "Could not copy";
+      }
+    } }, "Copy message"),
+    note,
+  );
+}
+
+function cookLink(meal, known) {
+  const link = el("a", { class: "btn", href: claudeLink(mealCookPrompt(meal, known)), target: "_blank", rel: "noopener" }, "🍳 Cook with Claude");
+  return link;
+}
+
 const CHAIN_LABEL = { "s-kaupat": "S-Kaupat", "k-ruoka": "K-Ruoka" };
 
 // The price the recipe had when it was created. The total follows the servings stepper, since the
@@ -786,6 +887,7 @@ function renderTags() {
 }
 
 async function load() {
+  config = await api("api/config").catch(() => config);
   storeNames = (await api("api/stores").catch(() => ({ names: {} }))).names;
   recipes = (await api("api/recipes")).recipes;
   renderTags();
@@ -874,6 +976,10 @@ function showDetail(id) {
         el("div", { class: "chips" }, badges(recipe)),
         el("div", { class: "row" }, stars, status),
       ),
+      claudeActions([
+        { label: "🍳 Cook with Claude", text: () => recipeCookPrompt(recipe, Number(servings.value) || recipe.servings), primary: true },
+        { label: "🛒 Shop with Claude", text: () => recipeShopPrompt(recipe, Number(servings.value) || recipe.servings) },
+      ]),
       macrosCard(recipe.nutrition),
       price ? price.node : null,
       el("div", { class: "row" }, el("span", { class: "meta" }, "Servings"), stepper(servings)),
@@ -1056,6 +1162,7 @@ function showPlan(id) {
             el("ol", { class: "steps" }, meal.steps.map((step) => el("li", {}, step))),
           )
         : null,
+      el("div", { class: "claude-row" }, cookLink(meal, known)),
       known
         ? el("button", { type: "button", onclick: () => showDetail(meal.recipe) }, "View recipe")
         : meal.ingredients?.length
@@ -1107,6 +1214,7 @@ function showPlan(id) {
         el("div", { class: "meta" }, `${storeLabel(plan.store.chain, plan.store.storeId, plan.store.name)} · saved ${new Date(plan.updatedAt).toLocaleDateString()}`),
         el("div", { class: "row" }, stars, ratingStatus),
       ),
+      claudeActions([{ label: "🛒 Shop with Claude", text: () => planShopPrompt(plan), primary: true }]),
       el("div", { class: "tiles" },
         tile(euro(plan.toBuy.total), notPricedCount(plan) > 0 ? `To buy + ${notPricedCount(plan)} not priced` : "To buy", "🛒", "tone-blue"),
         tile(euro(plan.pantry.total), "Pantry check", "🧂", "tone-orange"),
