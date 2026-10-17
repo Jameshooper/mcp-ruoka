@@ -365,7 +365,10 @@ a.btn {
 a.btn:active { transform: scale(0.96); }
 a.btn.primary { background: var(--accent); color: #fff; }
 @media (prefers-color-scheme: dark) { a.btn.primary { color: #2b1a12; } }
-.detail button.linkbtn { appearance: none; border: 0; background: none; border-radius: 0; font-weight: 500; padding: 6px 4px; color: var(--label2); font-size: 14px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.claude-row button.linkbtn,
+.detail .claude-row button.linkbtn { appearance: none; border: 0; background: none; border-radius: 0; font-weight: 500; padding: 6px 4px; color: var(--label2); font-size: 14px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.starter { background: color-mix(in srgb, var(--surface) 72%, transparent); -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); border-radius: 22px; padding: 16px 18px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
+.starter h2 { font-family: var(--serif); font-size: 20px; margin: 0 0 4px; }
 .claude-row { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin: 14px 0 4px; }
 
 /* Navigation bar with back button */
@@ -575,6 +578,7 @@ label.line .meta { font-size: 14px; }
   </div>
   <div id="detail-view" class="hidden"></div>
   <div id="plans-view" class="hidden">
+    <div id="plan-starter"></div>
     <div id="plan-grid" class="grid"></div>
     <div id="plan-empty" class="empty hidden"></div>
   </div>
@@ -777,6 +781,61 @@ function claudeActions(items) {
 function cookLink(meal, known) {
   const link = el("a", { class: "btn", href: claudeLink(mealCookPrompt(meal, known)), target: "_blank", rel: "noopener" }, "🍳 Cook with Claude");
   return link;
+}
+
+// The family week runs from a Wednesday to the Thursday after (9 dinners): the first two days are
+// for 5 people, the rest for 8.
+const FAMILY_FIRST_PORTIONS = 5;
+const FAMILY_OTHER_PORTIONS = 8;
+
+function familyWeek(today = new Date()) {
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  start.setDate(start.getDate() + ((3 - start.getDay() + 7) % 7));
+  const days = Array.from({ length: 9 }, (_, i) => {
+    const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    return { date, portions: i < 2 ? FAMILY_FIRST_PORTIONS : FAMILY_OTHER_PORTIONS };
+  });
+  const fmt = (d, opts) => d.toLocaleDateString("en-GB", opts).replace(",", "");
+  const short = { day: "numeric", month: "short" };
+  const first = days[0].date;
+  const last = days[8].date;
+  return {
+    days: days.map((d) => ({ label: fmt(d.date, { weekday: "short", ...short }), portions: d.portions })),
+    total: days.reduce((sum, d) => sum + d.portions, 0),
+    range: `${fmt(first, { weekday: "short", ...short })} to ${fmt(last, { weekday: "short", ...short })}`,
+    planName: `Family plan ${fmt(first, short)} - ${fmt(last, short)}`,
+  };
+}
+
+function familyPlanPrompt() {
+  const week = familyWeek();
+  const store = config.defaultStore || (plans[0] && { chain: plans[0].store.chain, id: plans[0].store.storeId, name: plans[0].store.name });
+  const dayList = week.days.map((d) => `${d.label} (${d.portions})`).join(", ");
+  return withNote(
+    `Create our family meal plan for ${week.range}.
+
+First ask me two quick questions and wait for my answer: do I have a budget for the week, and is there a theme or mood (for example cheap and cheerful, Asian, comfort food, quick weeknights, lots of vegetables)? I can answer "none" to either.
+
+Then plan dinners for these days and portions: ${dayList}, ${week.total} portions in total.
+
+Rules:
+- Start with my saved Ruoka recipes (list_recipes, prefer the ones I rated well). Save any new recipe with save_recipe, including its method.
+- Balance: at least one white meat, one red meat (at most 2 red meat dinners) and one fish dinner. Every dinner includes vegetables or a salad. Tag each meal's protein and vegetables.
+- Use food efficiently: pool ingredients so packs get used up, and plan leftovers into later meals.
+- Price it with plan_meals at ${storeText(store)} (${storeParams(store)}). Give every meal a dish name as well as its slot (for example "Wed dinner"). Adjust the menu and call again until the balance, waste, budget and missing items are all fine (substitute anything not found). Then save the plan once with saveAs "${week.planName}".
+- If lookups fail with HTTP 403, wait a few minutes instead of retrying at once, and never save a plan built from failed lookups.
+- Show the menu by day with portions, kcal and protein per portion; the shopping list by aisle (To buy, then Pantry check) with totals; the cost per portion; the balance and budget results; and what is left over.`,
+  );
+}
+
+function planStarter() {
+  const week = familyWeek();
+  return el("div", { class: "starter" },
+    el("h2", {}, "Plan the week"),
+    el("div", { class: "meta" }, `${week.range} · ${week.days.length} dinners · ${week.total} portions`),
+    claudeActions([{ label: "🗓️ Create family meal plan for this week", text: familyPlanPrompt, primary: true }]),
+    el("div", { class: "meta" }, "Claude will ask for a budget and a theme first."),
+  );
 }
 
 const CHAIN_LABEL = { "s-kaupat": "S-Kaupat", "k-ruoka": "K-Ruoka" };
@@ -1037,6 +1096,7 @@ function planCard(plan) {
 }
 
 function renderPlans() {
+  $("plan-starter").replaceChildren(planStarter());
   $("plan-grid").replaceChildren(...plans.map(planCard));
   const empty = $("plan-empty");
   empty.classList.toggle("hidden", plans.length > 0);
