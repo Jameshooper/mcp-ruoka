@@ -175,6 +175,18 @@ input, select, textarea, button { font: inherit; color: inherit; }
 .tile .icon { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; font-size: 18px; margin-bottom: 8px; background: linear-gradient(145deg, var(--g1), var(--g2)); }
 .badge { display: inline-grid; place-items: center; min-width: 28px; height: 22px; padding: 0 7px; margin-right: 8px; border-radius: 8px; font-size: 13px; font-weight: 700; letter-spacing: 0; color: #fff; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 80%, white), var(--accent)); }
 
+.titlerow { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.iconbtn { appearance: none; flex: none; width: 44px; height: 44px; margin-top: 4px; border-radius: 50%; display: grid; place-items: center; color: var(--accent); cursor: pointer; padding: 0; }
+.iconbtn svg { width: 22px; height: 22px; }
+.iconbtn:active { transform: scale(0.94); }
+.backup .starter { margin-bottom: 12px; }
+.backup .starter h2 { margin-bottom: 6px; }
+.backup .group { margin: 10px 0; }
+.backup .result { margin-top: 10px; font-size: 15px; }
+.backup .result.bad { color: var(--red); }
+.backup .result.ok { color: color-mix(in srgb, var(--green) 75%, var(--label)); }
+.backup input[type=file] { display: none; }
+
 /* Large title */
 .largetitle { padding: 12px 4px 10px; }
 h1 { font-family: var(--serif); font-size: 38px; line-height: 1.08; font-weight: 600; letter-spacing: -0.4px; margin: 0; }
@@ -550,7 +562,14 @@ label.line .meta { font-size: 14px; }
 <body>
 <div class="orbs" aria-hidden="true"><span class="o1"></span><span class="o2"></span><span class="o3"></span><span class="o4"></span></div>
 <main>
-  <header class="largetitle"><h1 id="title">Recipes</h1><p class="subtitle" id="subtitle"></p></header>
+  <header class="largetitle">
+    <div class="titlerow">
+      <div><h1 id="title">Recipes</h1><p class="subtitle" id="subtitle"></p></div>
+      <button type="button" id="backup-open" class="iconbtn glass" aria-label="Backup and restore" title="Backup and restore">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="M7.5 10L12 14.5 16.5 10"/><path d="M4.5 15v2.5A2.5 2.5 0 0 0 7 20h10a2.5 2.5 0 0 0 2.5-2.5V15"/></svg>
+      </button>
+    </div>
+  </header>
 
   <div id="list-view">
     <div class="search">
@@ -583,6 +602,7 @@ label.line .meta { font-size: 14px; }
     <div id="plan-empty" class="empty hidden"></div>
   </div>
   <div id="plan-detail-view" class="hidden"></div>
+  <div id="backup-view" class="hidden"></div>
 </main>
 
 <nav class="tabbar glass" aria-label="Sections">
@@ -894,7 +914,7 @@ function backButton(label, onclick) {
 }
 
 function show(viewId) {
-  for (const id of ["list-view", "detail-view", "plans-view", "plan-detail-view"]) {
+  for (const id of ["list-view", "detail-view", "plans-view", "plan-detail-view", "backup-view"]) {
     $(id).classList.toggle("hidden", id !== viewId);
   }
   const shown = $(viewId);
@@ -905,7 +925,7 @@ function show(viewId) {
   $("tab-recipes").classList.toggle("active", tab === "recipes");
   $("tab-plans").classList.toggle("active", tab === "plans");
   // The large title belongs to the list screens; detail screens use their own heading
-  document.querySelector(".largetitle").classList.toggle("hidden", viewId.endsWith("detail-view"));
+  document.querySelector(".largetitle").classList.toggle("hidden", viewId.endsWith("detail-view") || viewId === "backup-view");
 }
 
 function renderList() {
@@ -1343,6 +1363,137 @@ async function removePlan(plan) {
   plans = plans.filter((p) => p.id !== plan.id);
   closePlan();
 }
+
+
+const MODES = [
+  { value: "add", label: "Add only what is missing", note: "Keeps everything you have now" },
+  { value: "update", label: "Add and update", note: "Items in the file replace matching ones" },
+  { value: "replace", label: "Replace everything", note: "Removes anything that is not in the file" },
+];
+
+function describeCounts(name, c) {
+  if (!c) return null;
+  return `${name}: ${c.added} added, ${c.updated} updated, ${c.skipped} kept as they were`;
+}
+
+async function openBackup() {
+  tab = "backup";
+  await loadPlans().catch(() => {});
+  show("backup-view");
+  const view = $("backup-view");
+  let file = null;
+  let mode = "add";
+
+  const exportCard = el("div", { class: "starter" },
+    el("h2", {}, "Export"),
+    el("div", { class: "meta" }, `${recipes.length} recipes · ${plans.length} meal plans`),
+    el("div", { class: "claude-row" },
+      el("a", { class: "btn primary", href: "api/backup", download: "" }, "⬇ Export to zip"),
+    ),
+    el("div", { class: "meta" }, "One zip with your recipes, meal plans (ratings and ticked items too) and store names."),
+  );
+
+  const summary = el("div", { class: "meta" });
+  const modes = el("div", { class: "group hidden" }, MODES.map((m) => {
+    const radio = el("input", { type: "radio", name: "import-mode", value: m.value });
+    radio.checked = m.value === mode;
+    radio.addEventListener("change", () => {
+      mode = m.value;
+      refreshButton();
+    });
+    return el("label", { class: "line" }, radio, el("span", { class: "text" }, m.label, el("div", { class: "meta" }, m.note)));
+  }));
+  const result = el("div", { class: "result" });
+  const importButton = el("button", { type: "button", class: "primary hidden" }, "Import");
+  const picker = el("input", { type: "file", accept: ".zip,application/zip" });
+
+  const refreshButton = () => {
+    importButton.textContent = mode === "replace" ? "Replace everything with this file" : "Import";
+    importButton.classList.toggle("danger", mode === "replace");
+    importButton.classList.toggle("primary", mode !== "replace");
+  };
+
+  picker.addEventListener("change", async () => {
+    file = picker.files[0] || null;
+    result.textContent = "";
+    result.className = "result";
+    modes.classList.add("hidden");
+    importButton.classList.add("hidden");
+    summary.textContent = "";
+    if (!file) return;
+    summary.textContent = "Checking the file…";
+    try {
+      const preview = await api("api/backup/preview", { method: "POST", headers: { "Content-Type": "application/zip" }, body: file });
+      const lines = [];
+      if (preview.exportedAt) lines.push(`Exported ${new Date(preview.exportedAt).toLocaleString()}`);
+      if (preview.recipes) lines.push(`${preview.recipes.total} recipes (${preview.recipes.new} new, ${preview.recipes.existing} already here)`);
+      if (preview.plans) lines.push(`${preview.plans.total} meal plans (${preview.plans.new} new, ${preview.plans.existing} already here)`);
+      summary.textContent = lines.join(" · ");
+      modes.classList.remove("hidden");
+      importButton.classList.remove("hidden");
+      refreshButton();
+    } catch (error) {
+      summary.textContent = "";
+      result.className = "result bad";
+      result.textContent = error.message;
+    }
+  });
+
+  importButton.addEventListener("click", async () => {
+    if (!file) return;
+    if (mode === "replace" && !confirm("Replace all your recipes and meal plans with the contents of this file? A safety copy of the current data is saved first.")) return;
+    importButton.disabled = true;
+    try {
+      const done = await api(`api/backup/import?mode=${mode}`, { method: "POST", headers: { "Content-Type": "application/zip" }, body: file });
+      result.className = "result ok";
+      result.textContent = [describeCounts("Recipes", done.recipes), describeCounts("Meal plans", done.plans), `Your previous data was saved first as ${done.safetyCopy}.`].filter(Boolean).join(" · ");
+      await load();
+      await loadPlans().catch(() => {});
+      modes.classList.add("hidden");
+      importButton.classList.add("hidden");
+      summary.textContent = "";
+      picker.value = "";
+      file = null;
+    } catch (error) {
+      result.className = "result bad";
+      result.textContent = `Import failed: ${error.message}`;
+    } finally {
+      importButton.disabled = false;
+    }
+  });
+
+  const importCard = el("div", { class: "starter" },
+    el("h2", {}, "Import"),
+    el("div", { class: "meta" }, "Restore from a zip you exported earlier, on this or another device."),
+    el("div", { class: "claude-row" },
+      el("a", { class: "btn", href: "#", onclick: (event) => { event.preventDefault(); picker.click(); } }, "Choose a zip file…"),
+    ),
+    picker,
+    summary,
+    modes,
+    el("div", { class: "row" }, importButton),
+    result,
+  );
+
+  view.replaceChildren(
+    backButton("Back", closeBackup),
+    el("div", { class: "detail backup" },
+      el("h2", {}, "Backup & restore"),
+      exportCard,
+      importCard,
+      el("div", { class: "meta" }, "Importing always saves a copy of your current data first (the last 5 copies are kept in the app's data folder)."),
+    ),
+  );
+  window.scrollTo(0, 0);
+}
+
+function closeBackup() {
+  tab = "recipes";
+  show("list-view");
+  renderList();
+}
+
+$("backup-open").addEventListener("click", openBackup);
 
 $("tab-recipes").addEventListener("click", closeDetail);
 $("tab-plans").addEventListener("click", async () => {

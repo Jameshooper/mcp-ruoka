@@ -93,3 +93,7 @@ export const EstimatedCostSchema = z
 	);
 
 export type EstimatedCost = z.infer<typeof EstimatedCostSchema>;
+
+// How a backup is applied: add only what is missing, also update items that exist, or replace all
+export const ImportModeSchema = z.enum(["add", "update", "replace"]);
+export type ImportMode = z.infer<typeof ImportModeSchema>;

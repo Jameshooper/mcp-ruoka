@@ -2,8 +2,13 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as z from "zod/v4";
-import { slugify } from "./recipe-book.ts";
-import { IngredientSchema, ProteinSchema, StoredNutritionSchema } from "./schemas.ts";
+import { type ImportCounts, mergeById, slugify } from "./recipe-book.ts";
+import {
+	type ImportMode,
+	IngredientSchema,
+	ProteinSchema,
+	StoredNutritionSchema,
+} from "./schemas.ts";
 
 const LineSchema = z.object({
 	ingredient: z.string(),
@@ -231,5 +236,25 @@ export function deletePlan(idOrName: string): Promise<MealPlan | undefined> {
 		plans.splice(index, 1);
 		await writePlans(plans);
 		return removed;
+	});
+}
+
+export function parsePlanBook(text: string): MealPlan[] {
+	return BookSchema.parse(JSON.parse(text)).plans;
+}
+
+export function importPlans(incoming: MealPlan[], mode: ImportMode): Promise<ImportCounts> {
+	return exclusive(async () => {
+		const current = mode === "replace" ? [] : await readPlans();
+		const { items, counts } = mergeById(current, incoming, mode);
+		await writePlans(items);
+		return counts;
+	});
+}
+
+export function previewPlans(incoming: MealPlan[]): Promise<{ total: number; existing: number }> {
+	return exclusive(async () => {
+		const ids = new Set((await readPlans()).map((p) => p.id));
+		return { total: incoming.length, existing: incoming.filter((p) => ids.has(p.id)).length };
 	});
 }

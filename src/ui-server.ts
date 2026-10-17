@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import * as z from "zod/v4";
+import { applyBackup, BackupError, buildBackup, previewBackup } from "./backup.ts";
 import { logger } from "./logger.ts";
 import {
 	deletePlan,
@@ -18,6 +19,7 @@ import {
 	saveRecipe,
 	scaleRecipe,
 } from "./recipe-book.ts";
+import { ImportModeSchema } from "./schemas.ts";
 import { getStoreNames } from "./store-names.ts";
 
 const uiDir = join(import.meta.dirname, "ui");
@@ -123,6 +125,28 @@ async function saveMealAsRecipe(
 	return json({ recipe, plan: updated });
 }
 
+const MAX_BACKUP_BYTES = 25 * 1024 * 1024;
+
+// A zip content type forces a CORS preflight, so other sites cannot upload a file blindly
+async function handleBackupUpload(req: Request, apply: boolean, url: URL): Promise<Response> {
+	if (!req.headers.get("content-type")?.includes("application/zip")) {
+		return json({ error: "Expected a zip file" }, 415);
+	}
+	const bytes = new Uint8Array(await req.arrayBuffer());
+	if (bytes.length === 0 || bytes.length > MAX_BACKUP_BYTES) {
+		return json({ error: "The file is empty or too large" }, 413);
+	}
+	try {
+		if (!apply) return json(await previewBackup(bytes));
+		const mode = ImportModeSchema.safeParse(url.searchParams.get("mode"));
+		if (!mode.success) return json({ error: "Mode must be add, update or replace" }, 400);
+		return json(await applyBackup(bytes, mode.data));
+	} catch (error) {
+		if (error instanceof BackupError) return json({ error: error.message }, 400);
+		throw error;
+	}
+}
+
 // Paths are relative so the page works behind Home Assistant's ingress prefix
 export async function handleUiRequest(req: Request): Promise<Response> {
 	const url = new URL(req.url);
@@ -148,6 +172,22 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 		return new Response(Bun.file(join(uiDir, path)), {
 			headers: { "Cache-Control": "public, max-age=86400" },
 		});
+	}
+
+	if (path === "/api/backup" && req.method === "GET") {
+		const { bytes } = await buildBackup();
+		const day = new Date().toISOString().slice(0, 10);
+		return new Response(bytes, {
+			headers: {
+				"Content-Type": "application/zip",
+				"Content-Disposition": `attachment; filename="ruoka-backup-${day}.zip"`,
+				"Cache-Control": "no-store",
+			},
+		});
+	}
+
+	if ((path === "/api/backup/preview" || path === "/api/backup/import") && req.method === "POST") {
+		return handleBackupUpload(req, path.endsWith("/import"), url);
 	}
 
 	if (path === "/api/config" && req.method === "GET") {
@@ -260,6 +300,7 @@ export function startStandaloneUi(port: number, allowedLogins: string[]): void {
 		return;
 	}
 	Bun.serve({
+		maxRequestBodySize: MAX_BACKUP_BYTES,
 		hostname: "127.0.0.1",
 		port,
 		async fetch(req) {
@@ -280,6 +321,7 @@ export function startStandaloneUi(port: number, allowedLogins: string[]): void {
 
 export function startUiServer(port: number): void {
 	Bun.serve({
+		maxRequestBodySize: MAX_BACKUP_BYTES,
 		hostname: "0.0.0.0",
 		port,
 		async fetch(req, server) {

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import * as z from "zod/v4";
 import { logger } from "./logger.ts";
+import type { ImportMode } from "./schemas.ts";
 
 const BookSchema = z.object({ names: z.record(z.string(), z.string()) });
 
@@ -72,4 +73,24 @@ export async function resolveStoreName(
 		return given;
 	}
 	return (await getStoreNames())[keyOf(chain, id)];
+}
+
+export function parseStoreNames(text: string): Record<string, string> {
+	return BookSchema.parse(JSON.parse(text)).names;
+}
+
+export function importStoreNames(
+	incoming: Record<string, string>,
+	mode: ImportMode,
+): Promise<void> {
+	return exclusive(async () => {
+		const current = mode === "replace" ? {} : await read();
+		// Names are display-only: the file wins except in add-only mode
+		const names = mode === "add" ? { ...incoming, ...current } : { ...current, ...incoming };
+		const file = namesFile();
+		await mkdir(join(file, ".."), { recursive: true });
+		const temp = `${file}.tmp`;
+		await writeFile(temp, JSON.stringify({ names }, null, 2));
+		await rename(temp, file);
+	});
 }

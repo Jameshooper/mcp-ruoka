@@ -4,6 +4,7 @@ import { join } from "node:path";
 import * as z from "zod/v4";
 import {
 	EstimatedCostSchema,
+	type ImportMode,
 	IngredientSchema,
 	NutritionSchema,
 	ProteinSchema,
@@ -178,4 +179,54 @@ export function scaleRecipe(recipe: Recipe, servings: number): Recipe {
 			};
 		}),
 	};
+}
+
+export function parseRecipeBook(text: string): Recipe[] {
+	return BookSchema.parse(JSON.parse(text)).recipes;
+}
+
+export interface ImportCounts {
+	added: number;
+	updated: number;
+	skipped: number;
+}
+
+// Items match by id. "add" keeps what is already there, "update" lets the file win on a match,
+// "replace" starts from an empty book.
+export function mergeById<T extends { id: string }>(
+	current: T[],
+	incoming: T[],
+	mode: ImportMode,
+): { items: T[]; counts: ImportCounts } {
+	const byId = new Map((mode === "replace" ? [] : current).map((item) => [item.id, item]));
+	const counts: ImportCounts = { added: 0, updated: 0, skipped: 0 };
+	for (const item of incoming) {
+		if (!byId.has(item.id)) {
+			byId.set(item.id, item);
+			counts.added++;
+		} else if (mode === "update") {
+			byId.set(item.id, item);
+			counts.updated++;
+		} else {
+			counts.skipped++;
+		}
+	}
+	return { items: [...byId.values()], counts };
+}
+
+export function importRecipes(incoming: Recipe[], mode: ImportMode): Promise<ImportCounts> {
+	return exclusive(async () => {
+		const current = mode === "replace" ? [] : await readBook();
+		const { items, counts } = mergeById(current, incoming, mode);
+		await writeBook(items);
+		return counts;
+	});
+}
+
+// How many of the incoming recipes are new, without changing anything
+export function previewRecipes(incoming: Recipe[]): Promise<{ total: number; existing: number }> {
+	return exclusive(async () => {
+		const ids = new Set((await readBook()).map((r) => r.id));
+		return { total: incoming.length, existing: incoming.filter((r) => ids.has(r.id)).length };
+	});
 }

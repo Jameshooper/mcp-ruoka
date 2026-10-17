@@ -318,3 +318,33 @@ test("the config endpoint gives the buttons that open Claude their defaults", as
 	delete process.env.RUOKA_DEFAULT_STORE_NAME;
 	delete process.env.RUOKA_CLAUDE_NOTE;
 });
+
+test("the backup can be downloaded, previewed and imported over HTTP", async () => {
+	const { handleUiRequest } = await import("./ui-server.ts");
+	const { saveRecipe, deleteRecipe, findRecipe } = await import("./recipe-book.ts");
+	await saveRecipe(recipe);
+
+	const download = await handleUiRequest(new Request("http://x/api/backup"));
+	expect(download.headers.get("content-type")).toBe("application/zip");
+	expect(download.headers.get("content-disposition")).toContain("ruoka-backup-");
+	const bytes = new Uint8Array(await download.arrayBuffer());
+	await deleteRecipe("kanacurry");
+
+	const post = (path: string, body: Uint8Array | string, type = "application/zip") =>
+		handleUiRequest(
+			new Request(`http://x${path}`, { method: "POST", headers: { "Content-Type": type }, body }),
+		);
+
+	const preview = z
+		.object({ recipes: z.object({ total: z.number(), new: z.number() }).nullable() })
+		.parse(await (await post("/api/backup/preview", bytes)).json());
+	expect(preview.recipes?.new).toBeGreaterThan(0);
+
+	expect((await post("/api/backup/preview", bytes, "text/plain")).status).toBe(415);
+	expect((await post("/api/backup/import?mode=oops", bytes)).status).toBe(400);
+	expect((await post("/api/backup/preview", "not a zip")).status).toBe(400);
+
+	const done = await post("/api/backup/import?mode=add", bytes);
+	expect(done.status).toBe(200);
+	expect(await findRecipe("kanacurry")).toBeDefined();
+});
