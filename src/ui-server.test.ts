@@ -115,6 +115,8 @@ const SNAPSHOT = {
 			servings: 2,
 			steps: ["Cook"],
 			cost: { total: 1.6, perPortion: 0.8, complete: true },
+			prepMinutes: 10,
+			cookMinutes: 35,
 			ingredients: [
 				{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" as const } },
 			],
@@ -217,6 +219,7 @@ test("a plan can be rated, and a meal saved as a recipe and linked", async () =>
 	const recipe = await findRecipe("rice-bowl-special");
 	expect(recipe?.servings).toBe(2);
 	expect(recipe?.steps).toEqual(["Cook"]);
+	expect([recipe?.prepMinutes, recipe?.cookMinutes]).toEqual([10, 35]);
 	expect(recipe?.ingredients[0]?.finnish).toEqual(["riisi"]);
 	// the price at the time of the plan stays with the recipe
 	expect(recipe?.estimatedCost).toMatchObject({

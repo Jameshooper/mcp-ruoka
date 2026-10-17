@@ -23,6 +23,20 @@ export const RecipeInputSchema = z.object({
 			"The method as ordered steps (required: a saved recipe without its method is not usable)",
 		),
 	tags: z.array(z.string().min(1).max(40)).max(10).default([]),
+	prepMinutes: z
+		.number()
+		.int()
+		.min(0)
+		.max(1440)
+		.optional()
+		.describe("Hands-on preparation time in minutes (chopping, mixing)"),
+	cookMinutes: z
+		.number()
+		.int()
+		.min(0)
+		.max(1440)
+		.optional()
+		.describe("Cooking time in minutes (hob, oven or pressure cooker, including waiting)"),
 	protein: ProteinSchema.optional(),
 	vegetables: z
 		.boolean()

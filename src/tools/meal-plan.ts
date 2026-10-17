@@ -68,6 +68,20 @@ const MealSchema = z.object({
 		.max(40)
 		.optional()
 		.describe("The method for an inline meal as ordered steps (a saved recipe brings its own)"),
+	prepMinutes: z
+		.number()
+		.int()
+		.min(0)
+		.max(1440)
+		.optional()
+		.describe("Preparation time of an inline meal"),
+	cookMinutes: z
+		.number()
+		.int()
+		.min(0)
+		.max(1440)
+		.optional()
+		.describe("Cooking time of an inline meal"),
 });
 
 type Meal = z.infer<typeof MealSchema>;
@@ -80,6 +94,8 @@ type ResolvedMeal = Omit<PlannedMeal, "name"> & {
 	ingredients: Ingredient[];
 	steps: string[];
 	dish?: string;
+	prepMinutes?: number;
+	cookMinutes?: number;
 	recipeId?: string;
 	// What this meal's ingredients cost at the chosen products, pro-rata (only the amounts used)
 	cost?: { total: number; perPortion: number; complete: boolean };
@@ -94,7 +110,11 @@ async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
 		const protein = meal.protein ?? recipe.protein;
 		const vegetables = meal.vegetables ?? recipe.vegetables;
 		const nutrition = meal.nutrition ?? recipe.nutrition;
+		const prepMinutes = meal.prepMinutes ?? recipe.prepMinutes;
+		const cookMinutes = meal.cookMinutes ?? recipe.cookMinutes;
 		return {
+			...(prepMinutes !== undefined && { prepMinutes }),
+			...(cookMinutes !== undefined && { cookMinutes }),
 			...base,
 			ingredients: scaleRecipe(recipe, meal.servings).ingredients,
 			recipeId: recipe.id,
@@ -111,6 +131,8 @@ async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
 			ingredients: meal.ingredients,
 			steps: meal.steps ?? [],
 			...(meal.dish && { dish: meal.dish }),
+			...(meal.prepMinutes !== undefined && { prepMinutes: meal.prepMinutes }),
+			...(meal.cookMinutes !== undefined && { cookMinutes: meal.cookMinutes }),
 			...(meal.protein && { protein: meal.protein }),
 			...(meal.vegetables !== undefined && { vegetables: meal.vegetables }),
 			...(meal.nutrition && { nutrition: meal.nutrition }),

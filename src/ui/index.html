@@ -588,6 +588,7 @@ label.line .meta { font-size: 14px; }
       </select>
       <select id="sort" aria-label="Sort">
         <option value="rating">Best rated</option>
+        <option value="quick">Fastest</option>
         <option value="name">Name</option>
         <option value="recent">Recently updated</option>
       </select>
@@ -689,6 +690,31 @@ function nutritionText(recipe) {
 
 function costText(cost) {
   return cost ? `≈ ${euro(cost.perPortion)} / portion${cost.complete === false ? "+" : ""}` : "";
+}
+
+function formatMinutes(total) {
+  if (total < 60) return `${total} min`;
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
+}
+
+// Total time when either part is known; null when the recipe has no time at all
+function totalMinutes(item) {
+  if (item.prepMinutes === undefined && item.cookMinutes === undefined) return null;
+  return (item.prepMinutes || 0) + (item.cookMinutes || 0);
+}
+
+function timeText(item) {
+  const total = totalMinutes(item);
+  return total === null ? "" : `⏱ ${formatMinutes(total)}`;
+}
+
+function timeDetail(item) {
+  const parts = [];
+  if (item.prepMinutes !== undefined) parts.push(`Prep ${formatMinutes(item.prepMinutes)}`);
+  if (item.cookMinutes !== undefined) parts.push(`Cook ${formatMinutes(item.cookMinutes)}`);
+  return parts.join(" · ");
 }
 
 function kvRow(n, cost) {
@@ -896,6 +922,11 @@ function matches(recipe, query, tag, protein) {
 function sorted(list, mode) {
   const copy = [...list];
   if (mode === "name") copy.sort((a, b) => a.name.localeCompare(b.name));
+  else if (mode === "quick") {
+    // Recipes without a time go last
+    const minutes = (r) => (totalMinutes(r) === null ? Infinity : totalMinutes(r));
+    copy.sort((a, b) => minutes(a) - minutes(b) || a.name.localeCompare(b.name));
+  }
   else if (mode === "recent") copy.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   else copy.sort((a, b) => (b.rating || 0) - (a.rating || 0) || a.name.localeCompare(b.name));
   return copy;
@@ -942,7 +973,7 @@ function renderList() {
         el("div", { class: "card-body" },
           el("h2", {}, r.name),
           staticStars(r.rating),
-          el("div", { class: "meta" }, `${r.servings} servings · ${r.ingredients.length} ingredients`),
+          el("div", { class: "meta" }, [timeText(r), `${r.servings} servings`, `${r.ingredients.length} ${r.ingredients.length === 1 ? "ingredient" : "ingredients"}`].filter(Boolean).join(" · ")),
           kvRow(r.nutrition, r.estimatedCost),
           el("div", { class: "chips" }, badges(r)),
         ),
@@ -1051,7 +1082,8 @@ function showDetail(id) {
       el("div", { class: `hero ${themeOf(recipe)}` },
         el("div", { class: "emoji" }, iconOf(recipe)),
         el("h2", {}, recipe.name),
-        el("div", { class: "meta" }, `${recipe.servings} servings · ${recipe.ingredients.length} ingredients`),
+        el("div", { class: "meta" }, [timeText(recipe), `${recipe.servings} servings`, `${recipe.ingredients.length} ${recipe.ingredients.length === 1 ? "ingredient" : "ingredients"}`].filter(Boolean).join(" · ")),
+        timeDetail(recipe) ? el("div", { class: "meta" }, timeDetail(recipe)) : null,
         el("div", { class: "chips" }, badges(recipe)),
         el("div", { class: "row" }, stars, status),
       ),
@@ -1226,6 +1258,7 @@ function showPlan(id) {
 
   const meals = plan.meals.map((meal, index) => {
     const info = [
+      timeText(meal),
       `${meal.servings} servings`,
       meal.cost ? costText(meal.cost) : null,
       nutritionText(meal) || "no nutrition data",

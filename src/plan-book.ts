@@ -30,6 +30,8 @@ const MealSchema = z.object({
 	name: z.string(),
 	// What the dish is called, as opposed to the slot it fills ("Chicken curry" vs "Wed dinner")
 	dish: z.string().optional(),
+	prepMinutes: z.number().optional(),
+	cookMinutes: z.number().optional(),
 	// The meal's ingredients totalled for its servings, so it can be saved as a recipe later
 	ingredients: z.array(IngredientSchema).default([]),
 	servings: z.number(),

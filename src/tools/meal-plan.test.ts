@@ -156,6 +156,8 @@ test("balance and nutrition come from recipe tags and inline overrides", async (
 			name: "Salmon bake",
 			servings: 2,
 			steps: ["Bake the salmon"],
+			prepMinutes: 15,
+			cookMinutes: 25,
 			protein: "fish",
 			vegetables: true,
 			nutrition: { kcal: 620, proteinG: 38, carbsG: 55, fatG: 22 },
@@ -406,3 +408,30 @@ test("plans carry calories from the store labels and the method of each meal", a
 function id211(input: Request | URL | string): boolean {
 	return input.toString().includes("211");
 }
+
+test("a saved recipe's times carry into the saved plan's meal", async () => {
+	const { findPlan } = await import("../plan-book.ts");
+	const client = await connect();
+	await client.callTool({
+		name: "plan_meals",
+		arguments: {
+			chain: "s-kaupat",
+			storeId: "1",
+			saveAs: "Timed week",
+			meals: [
+				{ name: "Mon", recipe: "salmon-bake", servings: 2 },
+				{
+					name: "Tue",
+					servings: 2,
+					cookMinutes: 20,
+					ingredients: [
+						{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" } },
+					],
+				},
+			],
+		},
+	});
+	const meals = (await findPlan("timed-week"))?.meals;
+	expect([meals?.[0]?.prepMinutes, meals?.[0]?.cookMinutes]).toEqual([15, 25]);
+	expect([meals?.[1]?.prepMinutes, meals?.[1]?.cookMinutes]).toEqual([undefined, 20]);
+});

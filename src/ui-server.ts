@@ -115,6 +115,8 @@ async function saveMealAsRecipe(
 		ingredients: meal.ingredients,
 		steps: meal.steps,
 		tags: [],
+		...(meal.prepMinutes !== undefined && { prepMinutes: meal.prepMinutes }),
+		...(meal.cookMinutes !== undefined && { cookMinutes: meal.cookMinutes }),
 		...(meal.protein && { protein: meal.protein }),
 		...(meal.vegetables !== undefined && { vegetables: meal.vegetables }),
 		...(nutrition && { nutrition }),
