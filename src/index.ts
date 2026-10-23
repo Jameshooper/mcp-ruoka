@@ -4,20 +4,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import {
-	createAuthCode,
-	exchangeAuthCode,
-	isKnownClientId,
-	issueAccessToken,
-	oauthEnabled,
-	validateAccessToken,
-	validateClientCredentials,
-	validateRefreshToken,
-} from "./auth.ts";
+import { oauthEnabled, validateAccessToken } from "./auth.ts";
 import { warmup as warmupAlko } from "./browser/alko.ts";
 import { warmup as warmupSKaupat } from "./browser/s-kaupat.ts";
 import { getPage } from "./browser/session.ts";
 import { logger } from "./logger.ts";
+import { authorizeResponse, tokenResponse } from "./oauth-routes.ts";
+import { type ClientAddress, clientAddress, ipAllowed, parseCidrs } from "./security.ts";
 import { registerMealPlanTool } from "./tools/meal-plan.ts";
 import { registerPlanBookTools } from "./tools/plan-book.ts";
 import { registerRecipeTool } from "./tools/recipe.ts";
@@ -101,6 +94,10 @@ function startHttpServer() {
 
 	const port = Number(process.env.PORT) || 3001;
 	const authToken = process.env.MCP_AUTH_TOKEN;
+	// Optional: only these addresses (e.g. Anthropic's published outbound range) may use /mcp, /token
+	// and the discovery documents. Empty means no restriction.
+	const allowedCidrs = parseCidrs(process.env.MCP_ALLOWED_IPS);
+	if (allowedCidrs.length > 0) logger.info({ ranges: allowedCidrs.length }, "IP allowlist enabled");
 
 	if (!authToken && !oauthEnabled) {
 		logger.warn("No authentication configured — running without auth");
@@ -153,91 +150,17 @@ function startHttpServer() {
 		}
 	}
 
-	function handleAuthorize(url: URL): Response {
-		const responseType = url.searchParams.get("response_type");
-		const id = url.searchParams.get("client_id");
-		const redirectUri = url.searchParams.get("redirect_uri");
-		const state = url.searchParams.get("state");
-		const codeChallenge = url.searchParams.get("code_challenge");
-		const codeChallengeMethod = url.searchParams.get("code_challenge_method") ?? "S256";
-
-		if (
-			responseType !== "code" ||
-			!id ||
-			!redirectUri ||
-			!codeChallenge ||
-			codeChallengeMethod !== "S256"
-		) {
-			return Response.json({ error: "invalid_request" }, { status: 400 });
-		}
-		if (!isKnownClientId(id)) {
-			return Response.json({ error: "invalid_client" }, { status: 401 });
-		}
-
-		const code = createAuthCode({
-			codeChallenge,
-			codeChallengeMethod,
-			redirectUri,
-			clientId: id,
-		});
-		const redirect = new URL(redirectUri);
-		redirect.searchParams.set("code", code);
-		if (state) redirect.searchParams.set("state", state);
-		return Response.redirect(redirect.toString(), 302);
-	}
-
-	async function handleToken(req: Request): Promise<Response> {
-		const params = new URLSearchParams(await req.text());
-		switch (params.get("grant_type")) {
-			case "authorization_code": {
-				const code = params.get("code");
-				const codeVerifier = params.get("code_verifier");
-				const redirectUri = params.get("redirect_uri");
-				const id = params.get("client_id");
-				if (!code || !codeVerifier || !redirectUri || !id) {
-					return Response.json({ error: "invalid_request" }, { status: 400 });
-				}
-
-				const token = exchangeAuthCode({ code, codeVerifier, redirectUri, clientId: id });
-				if (!token) {
-					return Response.json({ error: "invalid_grant" }, { status: 400 });
-				}
-				return Response.json(token);
-			}
-
-			case "client_credentials": {
-				const id = params.get("client_id");
-				const secret = params.get("client_secret");
-				if (!id || !secret || !validateClientCredentials(id, secret)) {
-					return Response.json({ error: "invalid_client" }, { status: 401 });
-				}
-				return Response.json(issueAccessToken());
-			}
-
-			case "refresh_token": {
-				const refreshToken = params.get("refresh_token");
-				if (!refreshToken || !validateRefreshToken(refreshToken)) {
-					return Response.json({ error: "invalid_grant" }, { status: 400 });
-				}
-				return Response.json(issueAccessToken());
-			}
-
-			default:
-				return Response.json({ error: "unsupported_grant_type" }, { status: 400 });
-		}
-	}
-
 	async function handleOAuthRoutes(req: Request, url: URL): Promise<Response | null> {
 		if (req.method === "GET") {
 			const discovery = handleOAuthDiscovery(req, url);
 			if (discovery) return discovery;
-			if (url.pathname === "/authorize") return handleAuthorize(url);
+			if (url.pathname === "/authorize") return authorizeResponse(url);
 		}
-		if (req.method === "POST" && url.pathname === "/token") return handleToken(req);
+		if (req.method === "POST" && url.pathname === "/token") return tokenResponse(await req.text());
 		return null;
 	}
 
-	async function handleMcp(req: Request): Promise<Response> {
+	async function handleMcp(req: Request, client: ClientAddress): Promise<Response> {
 		const sessionId = req.headers.get("mcp-session-id");
 
 		if (req.method === "POST") {
@@ -263,7 +186,15 @@ function startHttpServer() {
 			const transport = new WebStandardStreamableHTTPServerTransport({
 				sessionIdGenerator: () => randomUUID(),
 				onsessioninitialized: (sid) => {
-					logger.info({ sessionId: sid }, "New MCP session initialized");
+					logger.info(
+						{
+							sessionId: sid,
+							clientIp: client.ip,
+							ipSource: client.source,
+							forwarded: req.headers.has("x-forwarded-for"),
+						},
+						"New MCP session initialized",
+					);
 					transports.set(sid, { transport, lastActivity: Date.now() });
 				},
 			});
@@ -299,9 +230,23 @@ function startHttpServer() {
 		hostname: "0.0.0.0",
 		port,
 		idleTimeout: 120,
-		async fetch(req: Request): Promise<Response> {
+		async fetch(req: Request, server): Promise<Response> {
 			const url = new URL(req.url);
 			logger.debug({ method: req.method, path: url.pathname }, "Incoming request");
+
+			const client = clientAddress(req.headers, server.requestIP(req)?.address);
+			// /authorize is opened by the user's own browser, so it cannot be limited to Claude's servers
+			const restricted =
+				url.pathname === "/mcp" ||
+				url.pathname === "/token" ||
+				url.pathname.startsWith("/.well-known/");
+			if (allowedCidrs.length > 0 && restricted && !ipAllowed(client.ip, allowedCidrs)) {
+				logger.warn(
+					{ clientIp: client.ip, ipSource: client.source, path: url.pathname },
+					"Refused a request from outside the IP allowlist",
+				);
+				return new Response("Forbidden", { status: 403 });
+			}
 
 			if (oauthEnabled) {
 				const oauthResponse = await handleOAuthRoutes(req, url);
@@ -312,7 +257,10 @@ function startHttpServer() {
 			if (url.pathname !== "/mcp") return new Response("Not Found", { status: 404 });
 
 			if (!checkAuth(req)) {
-				logger.warn({ method: req.method, path: url.pathname }, "Auth rejected");
+				logger.warn(
+					{ method: req.method, path: url.pathname, clientIp: client.ip, ipSource: client.source },
+					"Auth rejected",
+				);
 				const headers: Record<string, string> = {};
 				if (oauthEnabled) {
 					const base = getBaseUrl(req);
@@ -322,7 +270,7 @@ function startHttpServer() {
 				return new Response(null, { status: 401, headers });
 			}
 
-			return handleMcp(req);
+			return handleMcp(req, client);
 		},
 	});
 
