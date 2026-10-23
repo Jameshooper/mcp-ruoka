@@ -108,15 +108,18 @@ function startHttpServer() {
 		logger.warn("No authentication configured — running without auth");
 	}
 
-	function checkAuth(req: Request): boolean {
+	function checkAuth(req: Request, client: ClientAddress): boolean {
 		if (!authToken && !oauthEnabled) return true;
 
 		const header = req.headers.get("authorization");
 		if (!header?.startsWith("Bearer ")) return false;
 		const token = header.slice(7);
 
+		// The static token never expires, so it is for local clients only: requests that came
+		// through Funnel (they carry a forwarded address) must use OAuth
 		if (
 			authToken &&
+			client.source !== "x-forwarded-for" &&
 			token.length === authToken.length &&
 			timingSafeEqual(Buffer.from(token), Buffer.from(authToken))
 		) {
@@ -125,7 +128,12 @@ function startHttpServer() {
 		return oauthEnabled && validateAccessToken(token);
 	}
 
+	// Set from the Tailscale node name when published; the Host header is only a fallback for local
+	// use, since a caller can put anything in it
+	const publicUrl = process.env.RUOKA_PUBLIC_URL?.replace(/\/+$/, "");
+
 	function getBaseUrl(req: Request): string {
+		if (publicUrl) return publicUrl;
 		const proto = req.headers.get("x-forwarded-proto") ?? "http";
 		const host = req.headers.get("host") ?? `localhost:${port}`;
 		return `${proto}://${host}`;
@@ -155,13 +163,23 @@ function startHttpServer() {
 		}
 	}
 
-	async function handleOAuthRoutes(req: Request, url: URL): Promise<Response | null> {
+	async function handleOAuthRoutes(
+		req: Request,
+		url: URL,
+		client: ClientAddress,
+	): Promise<Response | null> {
 		if (req.method === "GET") {
 			const discovery = handleOAuthDiscovery(req, url);
 			if (discovery) return discovery;
-			if (url.pathname === "/authorize") return authorizeResponse(url);
+			if (url.pathname === "/authorize") return authorizeResponse(url, client.ip);
 		}
-		if (req.method === "POST" && url.pathname === "/token") return tokenResponse(await req.text());
+		if (req.method === "POST" && url.pathname === "/token") {
+			return tokenResponse({
+				body: await req.text(),
+				ip: client.ip,
+				authorization: req.headers.get("authorization"),
+			});
+		}
 		return null;
 	}
 
@@ -180,7 +198,7 @@ function startHttpServer() {
 				);
 			}
 
-			const body = await req.json();
+			const body: unknown = await req.json().catch(() => undefined);
 			if (!isInitializeRequest(body)) {
 				return Response.json(
 					{ jsonrpc: "2.0", error: { code: -32600, message: "Invalid request" }, id: null },
@@ -231,10 +249,20 @@ function startHttpServer() {
 		return new Response("Method Not Allowed", { status: 405 });
 	}
 
+	// 127.0.0.2 when published through Tailscale: its userspace networking forwards direct tailnet
+	// connections to 127.0.0.1, which would otherwise look like trusted Funnel traffic
+	const hostname = process.env.MCP_HOST || "0.0.0.0";
+
 	Bun.serve({
-		hostname: "0.0.0.0",
+		hostname,
 		port,
 		idleTimeout: 120,
+		// Development mode answers crashes with a debug page showing paths and error details
+		development: false,
+		error(error) {
+			logger.error({ err: error }, "MCP request failed");
+			return new Response("Internal Server Error", { status: 500 });
+		},
 		async fetch(req: Request, server): Promise<Response> {
 			const url = new URL(req.url);
 			logger.debug({ method: req.method, path: url.pathname }, "Incoming request");
@@ -250,23 +278,27 @@ function startHttpServer() {
 					{ clientIp: client.ip, ipSource: client.source, path: url.pathname },
 					"Refused a request from outside the IP allowlist",
 				);
+				// The path is chosen by the caller, so only its category goes into the notification
+				const target = url.pathname.startsWith("/.well-known/")
+					? "discovery"
+					: url.pathname.slice(1);
 				alert(
 					"ip-refused",
 					"Ruoka: request refused",
-					`A request to ${url.pathname} from ${client.ip ?? "an unknown address"} was refused by the IP allowlist.`,
+					`A ${target} request from ${client.ip ?? "an unknown address"} was refused by the IP allowlist.`,
 				);
 				return new Response("Forbidden", { status: 403 });
 			}
 
 			if (oauthEnabled) {
-				const oauthResponse = await handleOAuthRoutes(req, url);
+				const oauthResponse = await handleOAuthRoutes(req, url, client);
 				if (oauthResponse) return oauthResponse;
 			}
 
 			if (url.pathname === "/logo.png") return new Response(Bun.file(logoPath));
 			if (url.pathname !== "/mcp") return new Response("Not Found", { status: 404 });
 
-			if (!checkAuth(req)) {
+			if (!checkAuth(req, client)) {
 				logger.warn(
 					{ method: req.method, path: url.pathname, clientIp: client.ip, ipSource: client.source },
 					"Auth rejected",
@@ -284,7 +316,7 @@ function startHttpServer() {
 		},
 	});
 
-	logger.info({ port, url: `http://localhost:${port}/mcp` }, "Ruoka MCP server listening");
+	logger.info({ hostname, port }, "Ruoka MCP server listening");
 
 	// Pre-warm so the first request isn't slow
 	getPage().catch((err) => {

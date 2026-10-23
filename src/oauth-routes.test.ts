@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from "bun:test";
+import { beforeEach, expect, setSystemTime, test } from "bun:test";
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
 
@@ -33,8 +33,8 @@ function codeFrom(response: Response): string {
 }
 
 const exchange = (code: string, extra: Record<string, string> = {}) =>
-	tokenResponse(
-		new URLSearchParams({
+	tokenResponse({
+		body: new URLSearchParams({
 			grant_type: "authorization_code",
 			code,
 			code_verifier: verifier,
@@ -42,7 +42,7 @@ const exchange = (code: string, extra: Record<string, string> = {}) =>
 			client_id: "test-client-id",
 			...extra,
 		}).toString(),
-	);
+	});
 
 beforeEach(() => limiter.reset());
 
@@ -69,23 +69,136 @@ test("an authorize request cannot send the code to an address of its own choosin
 	expect(response.headers.get("location")).toBeNull();
 });
 
-test("repeated failures lock the OAuth endpoints for a while", () => {
+const SECRET = "test-client-secret-value";
+const ATTACKER = "198.51.100.66";
+const CLAUDE = "160.79.106.22";
+const form = (fields: Record<string, string>) => new URLSearchParams(fields).toString();
+
+async function signIn(): Promise<{ access_token: string; refresh_token: string }> {
+	const code = codeFrom(authorizeResponse(authorizeUrl(), CLAUDE));
+	const done = await exchange(code, { client_secret: SECRET });
+	return z.object({ access_token: z.string(), refresh_token: z.string() }).parse(await done.json());
+}
+
+function lockOut(ip: string): void {
 	for (let i = 0; i < 10; i++) {
-		tokenResponse(
-			new URLSearchParams({
-				grant_type: "client_credentials",
-				client_id: "test-client-id",
-				client_secret: "guess",
-			}).toString(),
-		);
+		authorizeResponse(authorizeUrl({ client_id: "made-up" }), ip);
 	}
-	const blocked = tokenResponse(
-		new URLSearchParams({
+}
+
+test("repeated failures pause the failing address", () => {
+	lockOut(ATTACKER);
+	expect(authorizeResponse(authorizeUrl(), ATTACKER).status).toBe(429);
+	const guess = tokenResponse({
+		body: form({
 			grant_type: "client_credentials",
 			client_id: "test-client-id",
-			client_secret: "test-client-secret-value",
-		}).toString(),
-	);
-	expect(blocked.status).toBe(429);
-	expect(authorizeResponse(authorizeUrl()).status).toBe(429);
+			client_secret: "x",
+		}),
+		ip: ATTACKER,
+	});
+	expect(guess.status).toBe(429);
+});
+
+test("a stranger's failures cannot lock Claude out", async () => {
+	const tokens = await signIn();
+	lockOut(ATTACKER);
+	expect(authorizeResponse(authorizeUrl(), CLAUDE).status).toBe(302);
+	const refreshed = tokenResponse({
+		body: form({
+			grant_type: "refresh_token",
+			refresh_token: tokens.refresh_token,
+			client_id: "test-client-id",
+			client_secret: SECRET,
+		}),
+		ip: CLAUDE,
+	});
+	expect(refreshed.status).toBe(200);
+});
+
+test("Claude's renewals go through even when its shared address is paused", async () => {
+	const tokens = await signIn();
+	lockOut(CLAUDE);
+	const refreshed = tokenResponse({
+		body: form({
+			grant_type: "refresh_token",
+			refresh_token: tokens.refresh_token,
+			client_id: "test-client-id",
+			client_secret: SECRET,
+		}),
+		ip: CLAUDE,
+	});
+	expect(refreshed.status).toBe(200);
+});
+
+test("a refresh token alone is not enough", async () => {
+	const tokens = await signIn();
+	const bare = tokenResponse({
+		body: form({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
+		ip: ATTACKER,
+	});
+	expect(bare.status).toBe(401);
+	const wrong = tokenResponse({
+		body: form({
+			grant_type: "refresh_token",
+			refresh_token: tokens.refresh_token,
+			client_id: "test-client-id",
+			client_secret: "wrong",
+		}),
+		ip: ATTACKER,
+	});
+	expect(wrong.status).toBe(401);
+});
+
+test("client credentials are also accepted as HTTP Basic", async () => {
+	const tokens = await signIn();
+	const basic = Buffer.from(`test-client-id:${SECRET}`).toString("base64");
+	const refreshed = tokenResponse({
+		body: form({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
+		ip: CLAUDE,
+		authorization: `Basic ${basic}`,
+	});
+	expect(refreshed.status).toBe(200);
+	const broken = tokenResponse({
+		body: form({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
+		authorization: `Basic ${Buffer.from("test-client-id:%E0%A4%A").toString("base64")}`,
+	});
+	expect(broken.status).toBe(400);
+});
+
+test("refreshing cannot extend a sign-in past 90 days", async () => {
+	const start = Date.now();
+	try {
+		setSystemTime(new Date(start));
+		let { refresh_token } = await signIn();
+		const refresh = () =>
+			tokenResponse({
+				body: form({
+					grant_type: "refresh_token",
+					refresh_token,
+					client_id: "test-client-id",
+					client_secret: SECRET,
+				}),
+				ip: CLAUDE,
+			});
+		// Renewing every 20 days keeps working until the sign-in is 90 days old
+		for (let day = 20; day <= 80; day += 20) {
+			setSystemTime(new Date(start + day * 86_400_000));
+			const response = refresh();
+			expect(response.status).toBe(200);
+			refresh_token = z
+				.object({ refresh_token: z.string() })
+				.parse(await response.json()).refresh_token;
+		}
+		setSystemTime(new Date(start + 91 * 86_400_000));
+		expect(refresh().status).toBe(400);
+	} finally {
+		setSystemTime();
+	}
+});
+
+test("too many pending codes is a polite 503, not a crash", () => {
+	for (let i = 0; i < 100; i++) authorizeResponse(authorizeUrl(), CLAUDE);
+	const response = authorizeResponse(authorizeUrl(), CLAUDE);
+	expect(response.status).toBe(503);
 });

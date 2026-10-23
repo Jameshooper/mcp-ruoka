@@ -79,6 +79,20 @@ export function slugify(name: string): string {
 	return slug || "recipe";
 }
 
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+// Different names can slugify alike ("Chicken curry" / "Chicken Curry!", or any all-Cyrillic name
+// becoming "recipe"), so a taken id gets a number instead of replacing someone else's item
+export function uniqueId(name: string, items: Array<{ id: string; name: string }>): string {
+	const sameNamed = items.find((item) => sameName(item.name, name));
+	if (sameNamed) return sameNamed.id;
+	const base = slugify(name);
+	const taken = new Set(items.map((item) => item.id));
+	let id = base;
+	for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+	return id;
+}
+
 async function readBook(): Promise<Recipe[]> {
 	let text: string;
 	try {
@@ -121,7 +135,7 @@ export function findRecipe(idOrName: string): Promise<Recipe | undefined> {
 export function saveRecipe(input: RecipeInput): Promise<{ recipe: Recipe; replaced: boolean }> {
 	return exclusive(async () => {
 		const recipes = await readBook();
-		const id = slugify(input.name);
+		const id = uniqueId(input.name, recipes);
 		const now = new Date().toISOString();
 		const index = recipes.findIndex((r) => r.id === id);
 		const previous = index >= 0 ? recipes[index] : undefined;

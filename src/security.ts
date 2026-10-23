@@ -16,32 +16,50 @@ export function allowedRedirects(extra = process.env.OAUTH_REDIRECT_URIS ?? ""):
 	];
 }
 
-// Failed secret or code attempts are counted together: after `max` failures within the window the
-// OAuth endpoints answer 429 until it has passed. Tokens that are already valid are unaffected.
+// Failures are counted per client address: after `max` failures within the window that address
+// gets 429 until it has passed. Counting globally would let anyone on the internet lock Claude out
+// by sending a few bad requests.
+const MAX_TRACKED_ADDRESSES = 10_000;
+
 export class FailureLimiter {
-	private failures: number[] = [];
+	private failures = new Map<string, number[]>();
+	private lastSweep = Number.NEGATIVE_INFINITY;
 
 	constructor(
 		private readonly max = 10,
 		private readonly windowMs = 5 * 60_000,
 	) {}
 
-	private prune(now: number): void {
-		this.failures = this.failures.filter((t) => now - t < this.windowMs);
+	private recent(key: string, now: number): number[] {
+		const kept = (this.failures.get(key) ?? []).filter((t) => now - t < this.windowMs);
+		if (kept.length > 0) this.failures.set(key, kept);
+		else this.failures.delete(key);
+		return kept;
 	}
 
-	record(now = Date.now()): void {
-		this.prune(now);
-		this.failures.push(now);
+	record(key: string, now = Date.now()): void {
+		const kept = this.recent(key, now);
+		// Re-inserted so the map's order runs from least to most recently failing
+		this.failures.delete(key);
+		this.failures.set(key, [...kept, now]);
+		if (this.failures.size <= MAX_TRACKED_ADDRESSES) return;
+		if (now - this.lastSweep >= this.windowMs) {
+			this.lastSweep = now;
+			for (const k of [...this.failures.keys()]) this.recent(k, now);
+		}
+		// Still full of live entries: forget the quietest addresses rather than grow without bound
+		for (const k of this.failures.keys()) {
+			if (this.failures.size <= MAX_TRACKED_ADDRESSES) break;
+			this.failures.delete(k);
+		}
 	}
 
 	reset(): void {
-		this.failures = [];
+		this.failures.clear();
 	}
 
-	blocked(now = Date.now()): boolean {
-		this.prune(now);
-		return this.failures.length >= this.max;
+	blocked(key: string, now = Date.now()): boolean {
+		return this.recent(key, now).length >= this.max;
 	}
 }
 
@@ -119,14 +137,17 @@ export interface ClientAddress {
 	source: "x-forwarded-for" | "socket" | null;
 }
 
-const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+// The whole 127.0.0.0/8 block: the servers listen on 127.0.0.2 when published through Tailscale
+function isLoopback(peer: string): boolean {
+	return /^(::ffff:)?127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/i.test(peer) || peer === "::1";
+}
 
 // The Tailscale proxy runs on this machine, so it is the connection's peer. Only then is the
 // forwarded header believed, and only its last entry (the one the trusted proxy added), because
 // anything earlier in the list can be written by the caller.
 export function clientAddress(headers: Headers, peer: string | null | undefined): ClientAddress {
 	const forwarded = headers.get("x-forwarded-for");
-	if (peer && LOOPBACK.has(peer) && forwarded) {
+	if (peer && isLoopback(peer) && forwarded) {
 		const last = forwarded
 			.split(",")
 			.map((p) => p.trim())

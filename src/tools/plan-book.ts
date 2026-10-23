@@ -24,6 +24,7 @@ export function registerPlanBookTools(server: McpServer): void {
 		{
 			description:
 				"List the saved weekly meal plans (id, name, meals, shopping total, budget, whether balanced, how many ingredients are not priced and so missing from the total). Plans are saved by calling plan_meals with saveAs.",
+			annotations: { readOnlyHint: true },
 			inputSchema: z.object({}),
 		},
 		async () => {
@@ -51,6 +52,7 @@ export function registerPlanBookTools(server: McpServer): void {
 		{
 			description:
 				"Get one saved meal plan by id or name, with its meals, shopping list, totals and balance report.",
+			annotations: { readOnlyHint: true },
 			inputSchema: z.object({ plan: z.string().min(1).describe("Plan id or name") }),
 		},
 		async ({ plan }) => {
@@ -64,6 +66,7 @@ export function registerPlanBookTools(server: McpServer): void {
 		{
 			description:
 				"Rate a saved meal plan 1-5 stars, with an optional short review, when the user says how the week went. The same rating can be set in the Meal plans panel.",
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
 			inputSchema: z.object({
 				plan: z.string().min(1).describe("Plan id or name"),
 				rating: z.number().int().min(1).max(5),
@@ -82,6 +85,7 @@ export function registerPlanBookTools(server: McpServer): void {
 		"delete_meal_plan",
 		{
 			description: "Delete a saved meal plan by id or name. Only do this when the user asks.",
+			annotations: { readOnlyHint: false, destructiveHint: true },
 			inputSchema: z.object({ plan: z.string().min(1).describe("Plan id or name") }),
 		},
 		async ({ plan }) => {

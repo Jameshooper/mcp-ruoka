@@ -32,6 +32,7 @@ export function registerRecipeBookTools(server: McpServer): void {
 		{
 			description:
 				"Save a recipe to the personal recipe book so it can be reused later, scaled to any number of servings, and combined into a meal plan. Saving with the same name replaces the earlier version. Ingredient quantities are the TOTAL for the given servings count; include the Finnish search terms so the recipe can be priced without translating again. Always also set `prepMinutes` (hands-on preparation) and `cookMinutes` (cooking time) so the recipe list can show how long it takes. Always also set `protein` (white_meat, red_meat, fish, vegetarian or other), `vegetables` (true when the meal includes vegetables or a salad) and `nutrition` per portion (kcal and grams of protein, estimated from the ingredients) so weekly plans can be balanced and checked. Also pass estimatedCost exactly as returned by find_recipe_ingredients, so the recipe keeps the price it had when it was created.",
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
 			inputSchema: RecipeInputSchema,
 		},
 		async (input) => {
@@ -45,6 +46,7 @@ export function registerRecipeBookTools(server: McpServer): void {
 		{
 			description:
 				"List the saved recipes (id, name, servings, tags, rating out of 5, prep and cook minutes, protein type, vegetables, nutrition per portion, ingredient count). Prefer well-rated recipes when planning meals. Use get_recipe for the full contents.",
+			annotations: { readOnlyHint: true },
 			inputSchema: z.object({
 				tag: z.string().optional().describe("Only recipes carrying this tag"),
 			}),
@@ -78,6 +80,7 @@ export function registerRecipeBookTools(server: McpServer): void {
 		{
 			description:
 				"Get one saved recipe by id or name, optionally with the quantities scaled to a different number of servings.",
+			annotations: { readOnlyHint: true },
 			inputSchema: z.object({
 				recipe: z.string().min(1).describe("Recipe id or name"),
 				servings: z.number().int().positive().max(100).optional().describe("Scale to this many"),
@@ -95,6 +98,7 @@ export function registerRecipeBookTools(server: McpServer): void {
 		{
 			description:
 				"Rate a saved recipe 1-5 stars, with an optional short review, when the user says how a meal turned out. The same rating can be set in the Recipes panel.",
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
 			inputSchema: z.object({
 				recipe: z.string().min(1).describe("Recipe id or name"),
 				rating: z.number().int().min(1).max(5),
@@ -113,6 +117,7 @@ export function registerRecipeBookTools(server: McpServer): void {
 		"delete_recipe",
 		{
 			description: "Delete a saved recipe by id or name. Only do this when the user asks.",
+			annotations: { readOnlyHint: false, destructiveHint: true },
 			inputSchema: z.object({ recipe: z.string().min(1).describe("Recipe id or name") }),
 		},
 		async ({ recipe }) => {

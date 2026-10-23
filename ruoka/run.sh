@@ -20,7 +20,7 @@ RUOKA_CLAUDE_NOTE="$(opt claude_prompt_note)"
 MCP_ALLOWED_IPS="$(opt mcp_allowed_ips | tr -d '[:space:]')"
 RUOKA_NOTIFY_SERVICE="$(opt notify_service | tr -d '[:space:]')"
 
-# The published port is reachable from the whole LAN, so never run it open
+# The MCP endpoint is public through Funnel (or local without it), so never run it open
 if [ -z "$MCP_AUTH_TOKEN" ] && { [ -z "$OAUTH_CLIENT_ID" ] || [ -z "$OAUTH_CLIENT_SECRET" ]; }; then
   echo "Set mcp_auth_token, or both oauth_client_id and oauth_client_secret, in the app configuration" >&2
   exit 1
@@ -42,34 +42,48 @@ if [ -n "$TS_AUTH_KEY" ]; then
   until [ -S /var/run/tailscale/tailscaled.sock ]; do sleep 0.5; done
 
   tailscale up --auth-key="$TS_AUTH_KEY" --hostname="${TS_HOSTNAME:-ruoka}"
-  tailscale funnel --bg 3001
+  # Userspace networking hands direct tailnet connections to 127.0.0.1:<port>, where they would
+  # look like trusted proxy traffic. The servers listen on 127.0.0.2 instead, which only the
+  # Funnel and serve proxies below are pointed at. Earlier versions pointed them at 127.0.0.1, so
+  # the old configuration is cleared first.
+  LISTEN_HOST=127.0.0.2
+  tailscale serve reset || true
+  tailscale funnel --bg "http://$LISTEN_HOST:3001"
   tailscale funnel status
 
   # The standalone recipe app: tailnet members only (plain serve, not Funnel), on port 8443. The
   # node's owner is allowed unless ui_allowed_logins lists others.
   # Failures here must not stop the MCP server itself, so they only warn.
-  tailscale serve --bg --https=8443 http://127.0.0.1:3003 || echo "Could not publish the standalone recipe app on port 8443" >&2
+  tailscale serve --bg --https=8443 "http://$LISTEN_HOST:3003" || echo "Could not publish the standalone recipe app on port 8443" >&2
   tailscale serve status || true
   if [ -z "$UI_ALLOWED_LOGINS" ]; then
     UI_ALLOWED_LOGINS="$(tailscale status --json | jq -r '.User[(.Self.UserID | tostring)].LoginName // empty' || true)"
   fi
-  echo "Standalone recipe app: https://$(tailscale status --json | jq -r '.Self.DNSName | rtrimstr(".")' || true):8443 (allowed: ${UI_ALLOWED_LOGINS:-nobody})"
+  TS_DNS_NAME="$(tailscale status --json | jq -r '.Self.DNSName | rtrimstr(".")' || true)"
+  echo "Standalone recipe app: https://$TS_DNS_NAME:8443 (allowed: ${UI_ALLOWED_LOGINS:-nobody})"
 
   # Funnel only gets a public address when the tailnet policy grants this node the "funnel" attribute
   echo "Tailscale node: $(tailscale status --json | jq -c '{DNSName: .Self.DNSName, Online: .Self.Online, Attributes: ((.Self.CapMap // {}) | keys)}')"
 else
-  echo "No tailscale_auth_key set: not using Funnel; reachable on the host at port 3001" >&2
+  echo "No tailscale_auth_key set: not using Funnel; map port 3001 under the app's Network tab to reach it" >&2
 fi
 
 export MCP_AUTH_TOKEN OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET MCP_ALLOWED_IPS RUOKA_NOTIFY_SERVICE
 export BROWSER_DATA_DIR=/data/browser
 export RUOKA_DATA_DIR=/data
-# Served only through Home Assistant ingress; the Funnel proxies port 3001 alone
 export RUOKA_DEFAULT_STORE_ID RUOKA_DEFAULT_STORE_NAME RUOKA_CLAUDE_NOTE
+# Served only through Home Assistant ingress, which the server checks by the proxy's address
 export RUOKA_UI_PORT=3002
 if [ -n "$TS_AUTH_KEY" ]; then
+  export MCP_HOST="$LISTEN_HOST"
+  export RUOKA_UI_STANDALONE_HOST="$LISTEN_HOST"
   export RUOKA_UI_STANDALONE_PORT=3003
   export RUOKA_UI_ALLOWED_LOGINS="$UI_ALLOWED_LOGINS"
+  # OAuth discovery advertises this address instead of trusting the request's Host header
+  if [ -n "$TS_DNS_NAME" ]; then export RUOKA_PUBLIC_URL="https://$TS_DNS_NAME"; fi
+fi
+if [ -n "$MCP_AUTH_TOKEN" ] && [ -n "$TS_AUTH_KEY" ]; then
+  echo "Note: mcp_auth_token only works for local clients; requests through Funnel must use OAuth" >&2
 fi
 cd /app
 exec bun run src/index.ts

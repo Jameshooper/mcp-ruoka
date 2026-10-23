@@ -28,6 +28,7 @@ export function registerSearchTool(server: McpServer): void {
 		{
 			description:
 				"Search for products. Supports K-Ruoka (k-ruoka.fi), S-Kaupat (s-kaupat.fi), and Alko (alko.fi). Requires chain from get_stores. storeId is required for K-Ruoka and S-Kaupat, optional for Alko (national catalog).",
+			annotations: { readOnlyHint: true, openWorldHint: true },
 			inputSchema: z.object({
 				query: z.string().min(1).describe("Search query (e.g., 'maito', 'leipä', 'punaviini')"),
 				storeId: z

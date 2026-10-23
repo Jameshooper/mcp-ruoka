@@ -61,3 +61,30 @@ test("concurrent saves are all kept", async () => {
 	await Promise.all(["a", "b", "c", "d"].map((name) => book.saveRecipe({ ...base, name })));
 	expect(await book.listRecipes()).toHaveLength(4);
 });
+
+test("different names that slugify alike do not replace each other", async () => {
+	const { saveRecipe, listRecipes, findRecipe, uniqueId } = await import("./recipe-book.ts");
+	const first = await saveRecipe({ ...base, name: "Chicken curry" });
+	const second = await saveRecipe({ ...base, name: "Chicken Curry!" });
+	expect(second.replaced).toBe(false);
+	expect([first.recipe.id, second.recipe.id]).toEqual(["chicken-curry", "chicken-curry-2"]);
+	// the same name (in any case) still updates in place
+	const again = await saveRecipe({ ...base, name: "CHICKEN CURRY", servings: 6 });
+	expect(again.replaced).toBe(true);
+	expect(again.recipe.id).toBe("chicken-curry");
+	expect((await findRecipe("chicken-curry-2"))?.name).toBe("Chicken Curry!");
+
+	await saveRecipe({ ...base, name: "Борщ" });
+	const shchi = await saveRecipe({ ...base, name: "Щи" });
+	expect(shchi.replaced).toBe(false);
+	const names = (await listRecipes()).map((r) => r.name);
+	expect(names).toContain("Борщ");
+	expect(names).toContain("Щи");
+
+	expect(
+		uniqueId("Soup", [
+			{ id: "soup", name: "Other" },
+			{ id: "soup-2", name: "More" },
+		]),
+	).toBe("soup-3");
+});
