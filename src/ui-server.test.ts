@@ -351,3 +351,29 @@ test("the backup can be downloaded, previewed and imported over HTTP", async () 
 	expect(done.status).toBe(200);
 	expect(await findRecipe("kanacurry")).toBeDefined();
 });
+
+test("saved backups are listed and downloadable, and names cannot escape the folder", async () => {
+	const { handleUiRequest } = await import("./ui-server.ts");
+	const { saveDailyBackup } = await import("./backup.ts");
+	const { saveRecipe } = await import("./recipe-book.ts");
+	await saveRecipe(recipe);
+	await saveDailyBackup(new Date("2026-02-01T10:00:00Z"));
+
+	const listed = z
+		.object({ backups: z.array(z.object({ name: z.string(), kind: z.string() })) })
+		.parse(await (await handleUiRequest(new Request("http://x/api/backups"))).json());
+	expect(listed.backups.map((b) => b.name)).toContain("ruoka-daily-2026-02-01.zip");
+
+	const file = await handleUiRequest(
+		new Request("http://x/api/backups/ruoka-daily-2026-02-01.zip"),
+	);
+	expect(file.status).toBe(200);
+	expect(file.headers.get("content-type")).toBe("application/zip");
+
+	expect((await handleUiRequest(new Request("http://x/api/backups/recipes.json"))).status).toBe(
+		404,
+	);
+	expect(
+		(await handleUiRequest(new Request("http://x/api/backups/..%2Frecipes.json"))).status,
+	).toBe(404);
+});

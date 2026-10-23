@@ -1511,13 +1511,33 @@ async function openBackup() {
     result,
   );
 
+  const savedList = el("div", { class: "meta" }, "Loading…");
+  const savedCard = el("div", { class: "starter" },
+    el("h2", {}, "Saved backups"),
+    el("div", { class: "meta" }, "A copy is saved automatically once a day (the last 7 are kept), and before every import."),
+    savedList,
+  );
+  api("api/backups").then(({ backups }) => {
+    if (!backups.length) {
+      savedList.textContent = "None yet. The first one is saved within an hour of the app starting.";
+      return;
+    }
+    savedList.replaceChildren(...backups.map((b) => el("div", { class: "line" },
+      el("span", { class: "text" },
+        new Date(b.modified).toLocaleString(),
+        el("div", { class: "meta" }, `${b.kind === "daily" ? "Daily" : "Before import"} · ${Math.max(1, Math.round(b.size / 1024))} KB`),
+      ),
+      el("a", { class: "btn", href: `api/backups/${encodeURIComponent(b.name)}`, download: "" }, "⬇"),
+    )));
+  }).catch((error) => { savedList.textContent = `Could not load backups: ${error.message}`; });
+
   view.replaceChildren(
     backButton("Back", closeBackup),
     el("div", { class: "detail backup" },
       el("h2", {}, "Backup & restore"),
       exportCard,
+      savedCard,
       importCard,
-      el("div", { class: "meta" }, "Importing always saves a copy of your current data first (the last 5 copies are kept in the app's data folder)."),
     ),
   );
   window.scrollTo(0, 0);

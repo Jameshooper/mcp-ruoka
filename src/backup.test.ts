@@ -96,3 +96,27 @@ test("only the newest safety copies are kept", async () => {
 	const copies = (await readdir(join(dir, "backups"))).filter((f) => f.endsWith(".zip"));
 	expect(copies.length).toBe(5);
 });
+
+test("daily backup runs once a day, keeps the last 7, and skips empty data", async () => {
+	const { saveRecipe, deleteRecipe, listRecipes } = await import("./recipe-book.ts");
+	const { saveDailyBackup, listBackupFiles, backupFilePath } = await import("./backup.ts");
+	for (const r of await listRecipes()) await deleteRecipe(r.id);
+	expect(await saveDailyBackup(new Date("2026-01-01T10:00:00Z"))).toBeNull();
+
+	await saveRecipe(recipe("Kanacurry"));
+	expect(await saveDailyBackup(new Date("2026-01-01T10:00:00Z"))).toBe(
+		"ruoka-daily-2026-01-01.zip",
+	);
+	expect(await saveDailyBackup(new Date("2026-01-01T20:00:00Z"))).toBeNull();
+
+	for (let day = 2; day <= 9; day++) {
+		await saveDailyBackup(new Date(`2026-01-0${day}T10:00:00Z`));
+	}
+	const daily = (await listBackupFiles()).filter((b) => b.kind === "daily").map((b) => b.name);
+	expect(daily.length).toBe(7);
+	expect(daily).not.toContain("ruoka-daily-2026-01-01.zip");
+	expect(daily).toContain("ruoka-daily-2026-01-09.zip");
+
+	expect(backupFilePath("../recipes.json")).toBeNull();
+	expect(backupFilePath("ruoka-daily-2026-01-09.zip")).toContain("backups");
+});

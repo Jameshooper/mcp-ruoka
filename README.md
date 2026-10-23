@@ -28,6 +28,8 @@ The Funnel makes `/mcp` reachable from the internet, so the server defends itsel
 
 ### Backup and restore
 
+The app also saves a zip of everything once a day to `backups/ruoka-daily-YYYY-MM-DD.zip` in the data folder (the last 7 are kept, nothing is written while there are no recipes or plans). They are listed under **Saved backups** on the same screen, each with a download button. These copies live on the same disk as the data, so download one now and then to keep it elsewhere.
+
 The download button in the panel's header opens **Backup & restore**. Export gives one zip (`manifest.json`, `recipes.json`, `plans.json`, `stores.json`): recipes with ratings and prices, meal plans with ticked items, and store names. Import checks the file first (a preview of what is new and what already exists), then applies it as *add only what is missing* (default), *add and update* (the file wins on a match) or *replace everything*. Nothing is applied unless every file in the zip is valid, and each import first saves a copy of the current data to `backups/` in the data folder (the last 5 are kept). The zip is read and written by `src/zip.ts`, with size limits against crafted archives. The same files can be fetched with `GET api/backup`.
 
 ### Cook with Claude / Shop with Claude

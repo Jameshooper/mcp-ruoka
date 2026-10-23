@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as z from "zod/v4";
@@ -16,6 +16,10 @@ import { getStoreNames, importStoreNames, parseStoreNames } from "./store-names.
 import { unzipFiles, ZipError, zipFiles } from "./zip.ts";
 
 const KEEP_AUTO_BACKUPS = 5;
+const KEEP_DAILY_BACKUPS = 7;
+const DAILY_PREFIX = "ruoka-daily-";
+const BACKUP_FILE_RE = /^ruoka-(daily|before-import)-[0-9A-Za-z-]+\.zip$/;
+const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 export class BackupError extends Error {}
 
@@ -157,4 +161,66 @@ export async function applyBackup(
 	const plans = backup.plans ? await importPlans(backup.plans, mode) : null;
 	if (backup.names) await importStoreNames(backup.names, mode);
 	return { recipes, plans, safetyCopy };
+}
+
+function backupsDir(): string {
+	return join(dataDir(), "backups");
+}
+
+// One copy per day, written only when the day has none yet, so restarts do not pile up copies
+export async function saveDailyBackup(now = new Date()): Promise<string | null> {
+	const dir = backupsDir();
+	await mkdir(dir, { recursive: true });
+	const name = `${DAILY_PREFIX}${now.toISOString().slice(0, 10)}.zip`;
+	const existing = await readdir(dir);
+	if (existing.includes(name)) return null;
+
+	const { bytes, counts } = await buildBackup(now);
+	// An empty copy must not push the last good ones out of the rotation
+	if (counts.recipes === 0 && counts.plans === 0) return null;
+	await writeFile(join(dir, name), bytes);
+
+	const old = [...existing, name]
+		.filter((f) => f.startsWith(DAILY_PREFIX) && f.endsWith(".zip"))
+		.sort()
+		.slice(0, -KEEP_DAILY_BACKUPS);
+	await Promise.all(old.map((f) => rm(join(dir, f), { force: true })));
+	return name;
+}
+
+export function startDailyBackups(log: (err: unknown) => void): void {
+	const run = () => saveDailyBackup().catch(log);
+	void run();
+	setInterval(run, CHECK_INTERVAL_MS).unref();
+}
+
+export interface BackupFile {
+	name: string;
+	kind: "daily" | "before-import";
+	size: number;
+	modified: string;
+}
+
+export async function listBackupFiles(): Promise<BackupFile[]> {
+	const dir = backupsDir();
+	const names = await readdir(dir).catch(() => []);
+	const files = await Promise.all(
+		names
+			.filter((n) => BACKUP_FILE_RE.test(n))
+			.map(async (name) => {
+				const info = await stat(join(dir, name));
+				return {
+					name,
+					kind: name.startsWith(DAILY_PREFIX) ? ("daily" as const) : ("before-import" as const),
+					size: info.size,
+					modified: info.mtime.toISOString(),
+				};
+			}),
+	);
+	return files.sort((a, b) => b.modified.localeCompare(a.modified));
+}
+
+// The name is matched against a strict pattern, so it can never point outside the backups folder
+export function backupFilePath(name: string): string | null {
+	return BACKUP_FILE_RE.test(name) ? join(backupsDir(), name) : null;
 }

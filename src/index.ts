@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { oauthEnabled, validateAccessToken } from "./auth.ts";
+import { startDailyBackups } from "./backup.ts";
 import { warmup as warmupAlko } from "./browser/alko.ts";
 import { warmup as warmupSKaupat } from "./browser/s-kaupat.ts";
 import { getPage } from "./browser/session.ts";
@@ -57,7 +58,10 @@ if (process.argv.includes("--stdio")) {
 
 function startHttpServer() {
 	const uiPort = Number(process.env.RUOKA_UI_PORT);
-	if (uiPort > 0) startUiServer(uiPort);
+	if (uiPort > 0) {
+		startUiServer(uiPort);
+		startDailyBackups((err) => logger.warn({ err }, "Daily backup failed"));
+	}
 	const standalonePort = Number(process.env.RUOKA_UI_STANDALONE_PORT);
 	if (standalonePort > 0) {
 		startStandaloneUi(standalonePort, (process.env.RUOKA_UI_ALLOWED_LOGINS ?? "").split(","));

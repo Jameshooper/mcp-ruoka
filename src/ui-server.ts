@@ -1,6 +1,13 @@
 import { join } from "node:path";
 import * as z from "zod/v4";
-import { applyBackup, BackupError, buildBackup, previewBackup } from "./backup.ts";
+import {
+	applyBackup,
+	BackupError,
+	backupFilePath,
+	buildBackup,
+	listBackupFiles,
+	previewBackup,
+} from "./backup.ts";
 import { logger } from "./logger.ts";
 import {
 	deletePlan,
@@ -183,6 +190,24 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 			headers: {
 				"Content-Type": "application/zip",
 				"Content-Disposition": `attachment; filename="ruoka-backup-${day}.zip"`,
+				"Cache-Control": "no-store",
+			},
+		});
+	}
+
+	if (path === "/api/backups" && req.method === "GET") {
+		return json({ backups: await listBackupFiles() });
+	}
+
+	const backupFile = /^\/api\/backups\/([^/]+)$/.exec(path);
+	if (backupFile?.[1] && req.method === "GET") {
+		const name = decodeURIComponent(backupFile[1]);
+		const file = backupFilePath(name);
+		if (!file || !(await Bun.file(file).exists())) return json({ error: "Backup not found" }, 404);
+		return new Response(Bun.file(file), {
+			headers: {
+				"Content-Type": "application/zip",
+				"Content-Disposition": `attachment; filename="${name}"`,
 				"Cache-Control": "no-store",
 			},
 		});
