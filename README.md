@@ -125,7 +125,7 @@ For direct bearer token auth, set `MCP_AUTH_TOKEN` as a Fly secret and use it in
 3. In the app's Configuration tab set `oauth_client_id` and `oauth_client_secret` (`openssl rand -hex 32` each), `tailscale_auth_key`, and optionally `tailscale_hostname`. Start the app.
 4. In claude.ai: Settings → Connectors → Add custom connector, URL `https://<hostname>.<your-tailnet>.ts.net/mcp`, with the OAuth client ID and secret under advanced settings.
 
-For local-only use skip Funnel and Tailscale settings: set `mcp_auth_token` (`openssl rand -hex 32`) and connect an MCP client that runs on your own machine, e.g. `claude mcp add --transport http ruoka http://<ha-ip>:3001/mcp --header "Authorization: Bearer <token>"`. Claude on iOS and claude.ai custom connectors cannot reach a local address (they connect from Anthropic's servers), so those need the Funnel setup above.
+The app does not publish port 3001 on the host: only the Funnel (and the ingress panel) reach it. For local-only use skip Funnel and Tailscale settings, add a port mapping for `3001/tcp` under the app's Network tab, set `mcp_auth_token` (`openssl rand -hex 32`) and connect an MCP client that runs on your own machine, e.g. `claude mcp add --transport http ruoka http://<ha-ip>:3001/mcp --header "Authorization: Bearer <token>"`. Claude on iOS and claude.ai custom connectors cannot reach a local address (they connect from Anthropic's servers), so those need the Funnel setup above.
 
 The app builds by cloning this repo at `RUOKA_REF` (a build arg in `ruoka/Dockerfile`); bump `version` in `ruoka/config.yaml` to make Home Assistant rebuild with newer commits.
 
