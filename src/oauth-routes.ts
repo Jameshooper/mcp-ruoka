@@ -7,9 +7,21 @@ import {
 	validateRefreshToken,
 } from "./auth.ts";
 import { logger } from "./logger.ts";
+import { alert } from "./notify.ts";
 import { allowedRedirects, FailureLimiter } from "./security.ts";
 
 export const limiter = new FailureLimiter();
+
+function recordFailure(): void {
+	limiter.record();
+	if (limiter.blocked()) {
+		alert(
+			"sign-in-limit",
+			"Ruoka: sign-in attempts blocked",
+			"Too many failed sign-ins on the public endpoint. New sign-ins are paused for 5 minutes.",
+		);
+	}
+}
 
 function tooMany(): Response {
 	return Response.json(
@@ -37,7 +49,7 @@ export function authorizeResponse(url: URL): Response {
 		return Response.json({ error: "invalid_request" }, { status: 400 });
 	}
 	if (!isKnownClientId(id)) {
-		limiter.record();
+		recordFailure();
 		return Response.json({ error: "invalid_client" }, { status: 401 });
 	}
 	// A code may only be handed to Claude's own callback, never to an address the caller picks
@@ -60,7 +72,7 @@ export function tokenResponse(bodyText: string): Response {
 	if (limiter.blocked()) return tooMany();
 	const params = new URLSearchParams(bodyText);
 	const invalidClient = () => {
-		limiter.record();
+		recordFailure();
 		return Response.json({ error: "invalid_client" }, { status: 401 });
 	};
 
@@ -79,7 +91,7 @@ export function tokenResponse(bodyText: string): Response {
 
 			const token = exchangeAuthCode({ code, codeVerifier, redirectUri, clientId: id });
 			if (!token) {
-				limiter.record();
+				recordFailure();
 				return Response.json({ error: "invalid_grant" }, { status: 400 });
 			}
 			return Response.json(token);
@@ -95,7 +107,7 @@ export function tokenResponse(bodyText: string): Response {
 		case "refresh_token": {
 			const refreshToken = params.get("refresh_token");
 			if (!refreshToken || !validateRefreshToken(refreshToken)) {
-				limiter.record();
+				recordFailure();
 				return Response.json({ error: "invalid_grant" }, { status: 400 });
 			}
 			return Response.json(issueAccessToken());

@@ -1531,6 +1531,28 @@ async function openBackup() {
     )));
   }).catch((error) => { savedList.textContent = `Could not load backups: ${error.message}`; });
 
+  const alertResult = el("div", { class: "result" });
+  const alertButton = el("button", { type: "button" }, "Send a test notification");
+  alertButton.addEventListener("click", async () => {
+    alertButton.disabled = true;
+    try {
+      await api("api/notify/test", { method: "POST" });
+      alertResult.className = "result ok";
+      alertResult.textContent = "Sent. Check your phone.";
+    } catch (error) {
+      alertResult.className = "result bad";
+      alertResult.textContent = error.message;
+    } finally {
+      alertButton.disabled = false;
+    }
+  });
+  const alertCard = el("div", { class: "starter" },
+    el("h2", {}, "Phone alerts"),
+    el("div", { class: "meta" }, "The app can notify your phone through Home Assistant when sign-ins are blocked after too many failures, or when the IP allowlist refuses a request. Set notify_service in the app configuration (for example notify.mobile_app_your_phone)."),
+    el("div", { class: "row" }, alertButton),
+    alertResult,
+  );
+
   view.replaceChildren(
     backButton("Back", closeBackup),
     el("div", { class: "detail backup" },
@@ -1538,6 +1560,7 @@ async function openBackup() {
       exportCard,
       savedCard,
       importCard,
+      alertCard,
     ),
   );
   window.scrollTo(0, 0);

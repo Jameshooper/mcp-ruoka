@@ -1,5 +1,5 @@
 name: Ruoka MCP
-version: "0.18.4"
+version: "0.18.5"
 slug: ruoka
 description: MCP server for Finnish grocery and alcohol search (K-Ruoka, S-Kaupat, Alko), exposed to Claude via Tailscale Funnel
 url: https://github.com/Jameshooper/mcp-ruoka
@@ -12,6 +12,7 @@ ingress_port: 3002
 panel_icon: mdi:chef-hat
 panel_title: Recipes
 startup: application
+homeassistant_api: true
 options:
   mcp_auth_token: ""
   oauth_client_id: ""
@@ -20,6 +21,7 @@ options:
   tailscale_hostname: ruoka
   ui_allowed_logins: ""
   mcp_allowed_ips: ""
+  notify_service: ""
   default_store_id: "613756972"
   default_store_name: Prisma Linnainmaa
   claude_prompt_note: Always pass avoidAllergens for cashew, walnut and peanut.
@@ -31,6 +33,7 @@ schema:
   tailscale_hostname: str?
   ui_allowed_logins: str?
   mcp_allowed_ips: str?
+  notify_service: str?
   default_store_id: str?
   default_store_name: str?
   claude_prompt_note: str?

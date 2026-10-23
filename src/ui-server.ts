@@ -9,6 +9,7 @@ import {
 	previewBackup,
 } from "./backup.ts";
 import { logger } from "./logger.ts";
+import { sendNotification } from "./notify.ts";
 import {
 	deletePlan,
 	findPlan,
@@ -193,6 +194,15 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 				"Cache-Control": "no-store",
 			},
 		});
+	}
+
+	if (path === "/api/notify/test" && req.method === "POST") {
+		const result = await sendNotification(
+			"test",
+			"Ruoka: test notification",
+			"Security alerts from the Ruoka app will arrive like this.",
+		);
+		return json(result, result.ok ? 200 : 502);
 	}
 
 	if (path === "/api/backups" && req.method === "GET") {

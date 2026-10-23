@@ -10,6 +10,7 @@ import { warmup as warmupAlko } from "./browser/alko.ts";
 import { warmup as warmupSKaupat } from "./browser/s-kaupat.ts";
 import { getPage } from "./browser/session.ts";
 import { logger } from "./logger.ts";
+import { alert } from "./notify.ts";
 import { authorizeResponse, tokenResponse } from "./oauth-routes.ts";
 import { type ClientAddress, clientAddress, ipAllowed, parseCidrs } from "./security.ts";
 import { registerMealPlanTool } from "./tools/meal-plan.ts";
@@ -248,6 +249,11 @@ function startHttpServer() {
 				logger.warn(
 					{ clientIp: client.ip, ipSource: client.source, path: url.pathname },
 					"Refused a request from outside the IP allowlist",
+				);
+				alert(
+					"ip-refused",
+					"Ruoka: request refused",
+					`A request to ${url.pathname} from ${client.ip ?? "an unknown address"} was refused by the IP allowlist.`,
 				);
 				return new Response("Forbidden", { status: 403 });
 			}
