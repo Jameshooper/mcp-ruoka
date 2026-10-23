@@ -42,9 +42,33 @@ test("the forwarded header is believed only from the local proxy, and only its l
 
 test("the limiter blocks after repeated failures and recovers after the window", () => {
 	const limiter = new FailureLimiter(3, 1_000);
-	for (const t of [0, 100, 200]) limiter.record(t);
-	expect(limiter.blocked(300)).toBe(true);
-	expect(limiter.blocked(1_300)).toBe(false);
+	for (const t of [0, 100, 200]) limiter.record("203.0.113.1", t);
+	expect(limiter.blocked("203.0.113.1", 300)).toBe(true);
+	expect(limiter.blocked("203.0.113.1", 1_300)).toBe(false);
+});
+
+test("one address's failures do not block anyone else", () => {
+	const limiter = new FailureLimiter(3, 1_000);
+	for (const t of [0, 100, 200]) limiter.record("203.0.113.1", t);
+	expect(limiter.blocked("203.0.113.1", 300)).toBe(true);
+	expect(limiter.blocked("160.79.106.22", 300)).toBe(false);
+});
+
+test("the limiter does not grow without bound under many addresses", () => {
+	const limiter = new FailureLimiter(3, 60_000);
+	for (let i = 0; i < 20_000; i++) limiter.record(`10.0.${i >> 8}.${i & 255}`, 0);
+	// the newest addresses are still tracked, the oldest were dropped
+	limiter.record("10.0.78.31", 1);
+	limiter.record("10.0.78.31", 2);
+	expect(limiter.blocked("10.0.78.31", 3)).toBe(true);
+	expect(limiter.blocked("10.0.0.0", 3)).toBe(false);
+});
+
+test("any 127.x address counts as the local proxy", () => {
+	const headers = new Headers({ "X-Forwarded-For": "160.79.106.22" });
+	expect(clientAddress(headers, "127.0.0.2").source).toBe("x-forwarded-for");
+	expect(clientAddress(headers, "::ffff:127.0.0.1").source).toBe("x-forwarded-for");
+	expect(clientAddress(headers, "128.0.0.1").source).toBe("socket");
 });
 
 test("only Claude's callbacks are allowed unless more are configured", () => {

@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as z from "zod/v4";
-import { type ImportCounts, mergeById, slugify } from "./recipe-book.ts";
+import { type ImportCounts, mergeById, uniqueId } from "./recipe-book.ts";
 import {
 	type ImportMode,
 	IngredientSchema,
@@ -141,7 +141,7 @@ export function savePlan(
 ): Promise<{ plan: MealPlan; replaced: boolean }> {
 	return exclusive(async () => {
 		const plans = await readPlans();
-		const id = slugify(name);
+		const id = uniqueId(name, plans);
 		const index = plans.findIndex((p) => p.id === id);
 		const previous = index >= 0 ? plans[index] : undefined;
 		const now = new Date().toISOString();

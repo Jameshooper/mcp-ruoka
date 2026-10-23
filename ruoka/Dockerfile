@@ -1,9 +1,18 @@
-FROM oven/bun:1-debian
+# Pinned so a rebuild cannot silently pick up a different runtime; Dependabot proposes updates
+FROM oven/bun:1.4.4-debian
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git curl jq ca-certificates gnupg \
  && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://tailscale.com/install.sh | sh
+# Tailscale's signed apt repository, rather than piping a remote install script into a shell
+RUN . /etc/os-release \
+ && curl -fsSL "https://pkgs.tailscale.com/stable/debian/${VERSION_CODENAME}.noarmor.gpg" \
+      -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
+ && curl -fsSL "https://pkgs.tailscale.com/stable/debian/${VERSION_CODENAME}.tailscale-keyring.list" \
+      -o /etc/apt/sources.list.d/tailscale.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends tailscale \
+ && rm -rf /var/lib/apt/lists/*
 
 # The app folder is the build context, so the server source is cloned rather than copied.
 # Docker caches a step by its command text, not by what is on GitHub, so the clone step uses

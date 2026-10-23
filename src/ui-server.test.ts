@@ -240,7 +240,11 @@ test("a plan can be rated, and a meal saved as a recipe and linked", async () =>
 	expect(
 		(
 			await handleUiRequest(
-				new Request("http://x/api/plans/rate-me/meals/9/recipe", { method: "POST" }),
+				new Request("http://x/api/plans/rate-me/meals/9/recipe", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: "{}",
+				}),
 			)
 		).status,
 	).toBe(404);
@@ -376,4 +380,62 @@ test("saved backups are listed and downloadable, and names cannot escape the fol
 	expect(
 		(await handleUiRequest(new Request("http://x/api/backups/..%2Frecipes.json"))).status,
 	).toBe(404);
+});
+
+test("other websites cannot make changes, even with a body that looks like JSON", async () => {
+	const { savePlan } = await import("./plan-book.ts");
+	const { findRecipe } = await import("./recipe-book.ts");
+	const { handleUiRequest, isCrossSiteChange } = await import("./ui-server.ts");
+	await savePlan("Csrf target", SNAPSHOT);
+	const attempt = (headers: Record<string, string>) =>
+		handleUiRequest(
+			new Request("https://ruoka.example.ts.net:8443/api/plans/csrf-target/meals/0/recipe", {
+				method: "POST",
+				headers,
+				body: JSON.stringify({ name: "Planted", replace: true }),
+			}),
+		);
+
+	// a form or fetch from another site without a preflight
+	expect(
+		(await attempt({ "Content-Type": "text/plain", "Sec-Fetch-Site": "cross-site" })).status,
+	).toBe(403);
+	// another tailnet host counts as another site too
+	expect(
+		(await attempt({ "Content-Type": "text/plain", "Sec-Fetch-Site": "same-site" })).status,
+	).toBe(403);
+	// a client that sends no browser label but a foreign Origin
+	expect(
+		(await attempt({ "Content-Type": "text/plain", Origin: "https://evil.example" })).status,
+	).toBe(403);
+	// no label, no origin, but not JSON either
+	expect((await attempt({ "Content-Type": "text/plain" })).status).toBe(415);
+	expect(await findRecipe("planted")).toBeUndefined();
+
+	// the app's own page still works
+	expect(
+		(await attempt({ "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin" })).status,
+	).toBe(200);
+
+	const notify = (headers: Record<string, string>) =>
+		handleUiRequest(new Request("http://x/api/notify/test", { method: "POST", headers }));
+	expect((await notify({ "Sec-Fetch-Site": "cross-site" })).status).toBe(403);
+	expect((await notify({})).status).toBe(415);
+
+	// reading is never refused: the browser already keeps other sites from seeing the answer
+	expect(
+		isCrossSiteChange(
+			new Request("http://x/api/recipes", { headers: { "Sec-Fetch-Site": "cross-site" } }),
+		),
+	).toBe(false);
+	expect(
+		isCrossSiteChange(
+			new Request("http://x/api/recipes/x", { method: "DELETE", headers: { Origin: "null" } }),
+		),
+	).toBe(true);
+	expect(
+		isCrossSiteChange(
+			new Request("http://x/api/recipes/x", { method: "DELETE", headers: { Origin: "http://x" } }),
+		),
+	).toBe(false);
 });

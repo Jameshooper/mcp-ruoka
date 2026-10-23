@@ -5,6 +5,9 @@ const clientId = process.env.OAUTH_CLIENT_ID ?? "";
 const clientSecret = process.env.OAUTH_CLIENT_SECRET ?? "";
 const TOKEN_EXPIRY = 3600; // short so a leaked access token dies quickly; refresh tokens renew it silently
 const REFRESH_TOKEN_EXPIRY = 30 * 24 * 3600; // 30 days
+// Refreshing renews the refresh token too, so without a cap one leaked refresh token would work
+// forever. After this long since the original sign-in, the connector has to sign in again.
+const MAX_SIGN_IN_AGE = 90 * 24 * 3600;
 const CODE_TTL = 60_000; // 60 seconds in ms
 
 export const oauthEnabled = clientId.length > 0 && clientSecret.length > 0;
@@ -45,6 +48,8 @@ function pruneExpiredCodes(): void {
 	}
 }
 
+export class TooManyCodesError extends Error {}
+
 export function createAuthCode(params: {
 	codeChallenge: string;
 	codeChallengeMethod: string;
@@ -56,7 +61,7 @@ export function createAuthCode(params: {
 	}
 	pruneExpiredCodes();
 	if (authCodes.size >= MAX_AUTH_CODES) {
-		throw new Error("Too many pending authorization codes");
+		throw new TooManyCodesError("Too many pending authorization codes");
 	}
 
 	const code = randomBytes(32).toString("hex");
@@ -99,7 +104,8 @@ interface TokenResponse {
 	refresh_token: string;
 }
 
-export function issueAccessToken(): TokenResponse {
+// `authTime` is when the user originally signed in; refreshes carry it forward unchanged
+export function issueAccessToken(authTime?: number): TokenResponse {
 	const now = Math.floor(Date.now() / 1000);
 	return {
 		access_token: signJwt({ sub: clientId, iat: now, exp: now + TOKEN_EXPIRY }),
@@ -108,13 +114,19 @@ export function issueAccessToken(): TokenResponse {
 		refresh_token: signJwt({
 			sub: clientId,
 			iat: now,
-			exp: now + REFRESH_TOKEN_EXPIRY,
+			exp: Math.min(now + REFRESH_TOKEN_EXPIRY, (authTime ?? now) + MAX_SIGN_IN_AGE),
+			auth_time: authTime ?? now,
 			typ: "refresh",
 		}),
 	};
 }
 
-const JwtClaimsSchema = z.object({ exp: z.number(), typ: z.string().optional() });
+const JwtClaimsSchema = z.object({
+	exp: z.number(),
+	iat: z.number().optional(),
+	auth_time: z.number().optional(),
+	typ: z.string().optional(),
+});
 
 function verifyJwt(token: string): z.infer<typeof JwtClaimsSchema> | null {
 	if (!oauthEnabled) return null;
@@ -148,7 +160,12 @@ export function validateAccessToken(token: string): boolean {
 	return claims !== null && claims.typ === undefined;
 }
 
-export function validateRefreshToken(token: string): boolean {
+// Returns the original sign-in time, or null when the token is not a usable refresh token
+export function validateRefreshToken(token: string): number | null {
 	const claims = verifyJwt(token);
-	return claims !== null && claims.typ === "refresh";
+	if (claims === null || claims.typ !== "refresh") return null;
+	const now = Math.floor(Date.now() / 1000);
+	// Tokens issued before auth_time existed count from their own issue time
+	const authTime = claims.auth_time ?? claims.iat ?? now;
+	return now - authTime > MAX_SIGN_IN_AGE ? null : authTime;
 }

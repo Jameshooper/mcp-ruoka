@@ -21,11 +21,14 @@
 		"typescript": "^5"
 	},
 	"dependencies": {
-		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@modelcontextprotocol/sdk": "^1.32.1",
 		"pino": "^10.3.1",
 		"playwright": "^1.59.1",
 		"playwright-extra": "^4.3.6",
 		"puppeteer-extra-plugin-stealth": "^2.11.2",
 		"zod": "^4.3.6"
+	},
+	"overrides": {
+		"ip-address": "^10.7.4"
 	}
 }

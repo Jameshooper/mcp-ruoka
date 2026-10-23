@@ -13,6 +13,7 @@ export function registerStoresTool(server: McpServer): void {
 		{
 			description:
 				"List stores from K-Ruoka (k-ruoka.fi), S-Kaupat (s-kaupat.fi), and Alko (alko.fi). Returns store IDs and chain values needed for search_products.",
+			annotations: { readOnlyHint: true, openWorldHint: true },
 			inputSchema: z.object({
 				city: z
 					.string()

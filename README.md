@@ -24,7 +24,7 @@ The panel is also served as a standalone web app at `https://<hostname>.<tailnet
 
 ### Securing the public endpoint
 
-The Funnel makes `/mcp` reachable from the internet, so the server defends itself: every request to `/mcp` needs a valid token; the OAuth flow only hands codes to Claude's own callback URLs (`redirect_uri` allowlist, `OAUTH_REDIRECT_URIS` adds more); a code can only be exchanged with the client secret (the client id alone is not enough); and after 10 failed attempts in 5 minutes the OAuth endpoints answer 429 for a while. Optionally `MCP_ALLOWED_IPS` (app option `mcp_allowed_ips`, comma-separated addresses or CIDR ranges) limits `/mcp`, `/token` and the discovery documents to those sources. Tailscale Funnel has no IP allowlist of its own, so the check is made in the app on the client address Tailscale forwards (`X-Forwarded-For`, believed only when it comes from the local Tailscale proxy, last entry only). Look before you lock: every new MCP session logs `clientIp` and `ipSource`, so confirm Claude's calls show up with a real address in Anthropic's published outbound range before turning the allowlist on, because with an address that cannot be determined the check refuses the request.
+The Funnel makes `/mcp` reachable from the internet, so the server defends itself: every request to `/mcp` needs a valid token; the OAuth flow only hands codes to Claude's own callback URLs (`redirect_uri` allowlist, `OAUTH_REDIRECT_URIS` adds more); a code can only be exchanged with the client secret (the client id alone is not enough), and so can a refresh token; refreshing never extends a sign-in past 90 days, so a leaked refresh token stops working by then at the latest; and after 10 failed attempts in 5 minutes from one address that address gets 429 for a while (counted per address, so a stranger cannot lock Claude out, and Claude's renewals with valid credentials always go through). The static `MCP_AUTH_TOKEN` never expires, so it is only accepted from local clients, never through Funnel. With Tailscale the servers listen on `127.0.0.2`, because Tailscale's userspace networking hands direct tailnet connections to `127.0.0.1`, where they would look like trusted proxy traffic. OAuth discovery advertises the Tailscale name (`RUOKA_PUBLIC_URL`) instead of the request's Host header. The recipe app refuses changes sent from other websites (`Sec-Fetch-Site`/`Origin`), since on the standalone address Tailscale vouches for every request from your devices. Optionally `MCP_ALLOWED_IPS` (app option `mcp_allowed_ips`, comma-separated addresses or CIDR ranges) limits `/mcp`, `/token` and the discovery documents to those sources. Tailscale Funnel has no IP allowlist of its own, so the check is made in the app on the client address Tailscale forwards (`X-Forwarded-For`, believed only when it comes from the local Tailscale proxy, last entry only). Look before you lock: every new MCP session logs `clientIp` and `ipSource`, so confirm Claude's calls show up with a real address in Anthropic's published outbound range before turning the allowlist on, because with an address that cannot be determined the check refuses the request.
 
 ### Phone alerts
 
@@ -151,8 +151,11 @@ The server runs on `http://localhost:3001/mcp` by default (Streamable HTTP). Pas
 |---|---|
 | `OAUTH_CLIENT_ID` | OAuth client ID (required for claude.ai) |
 | `OAUTH_CLIENT_SECRET` | OAuth client secret (required for claude.ai) |
-| `MCP_AUTH_TOKEN` | Static bearer token (alternative to OAuth) |
+| `MCP_AUTH_TOKEN` | Static bearer token for local clients (alternative to OAuth; refused through Funnel) |
 | `PORT` | Server port (default: 3001) |
+| `MCP_HOST` | Address the server listens on (default: `0.0.0.0`) |
+| `RUOKA_PUBLIC_URL` | Public base URL advertised in OAuth discovery (default: taken from the Host header) |
+| `MCP_ALLOWED_IPS` | Optional comma-separated addresses or CIDR ranges allowed to use `/mcp`, `/token` and discovery |
 | `LOG_LEVEL` | pino log level (default: info) |
 | `BROWSER_DATA_DIR` | Persistent browser data directory (default: `.browser-data/`) |
 

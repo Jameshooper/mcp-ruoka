@@ -1536,7 +1536,7 @@ async function openBackup() {
   alertButton.addEventListener("click", async () => {
     alertButton.disabled = true;
     try {
-      await api("api/notify/test", { method: "POST" });
+      await api("api/notify/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       alertResult.className = "result ok";
       alertResult.textContent = "Sent. Check your phone.";
     } catch (error) {

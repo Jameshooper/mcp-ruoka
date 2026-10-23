@@ -157,10 +157,32 @@ async function handleBackupUpload(req: Request, apply: boolean, url: URL): Promi
 	}
 }
 
+// Browsers label every request with where it came from. Changes are only accepted from the app's
+// own pages: on the standalone address Tailscale vouches for every request from your device, so a
+// web page you visit could otherwise make changes in your name. Clients that send no label (curl,
+// older browsers, proxies that drop it) are judged by Origin instead.
+export function isCrossSiteChange(req: Request): boolean {
+	if (req.method === "GET" || req.method === "HEAD") return false;
+	const site = req.headers.get("sec-fetch-site");
+	if (site) return site !== "same-origin" && site !== "none";
+	const origin = req.headers.get("origin");
+	if (!origin || origin === "null") return origin === "null";
+	try {
+		return new URL(origin).host !== new URL(req.url).host;
+	} catch {
+		return true;
+	}
+}
+
 // Paths are relative so the page works behind Home Assistant's ingress prefix
 export async function handleUiRequest(req: Request): Promise<Response> {
 	const url = new URL(req.url);
 	const path = url.pathname.replace(/\/+$/, "") || "/";
+
+	if (isCrossSiteChange(req)) {
+		logger.warn({ method: req.method, path }, "Refused a cross-site change to the recipe app");
+		return json({ error: "Cross-site requests are not allowed" }, 403);
+	}
 
 	if (req.method === "GET" && (path === "/" || path === "/index.html")) {
 		return new Response(Bun.file(indexPath), {
@@ -197,6 +219,9 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 	}
 
 	if (path === "/api/notify/test" && req.method === "POST") {
+		if (!req.headers.get("content-type")?.includes("application/json")) {
+			return json({ error: "Expected JSON" }, 415);
+		}
 		const result = await sendNotification(
 			"test",
 			"Ruoka: test notification",
@@ -249,6 +274,10 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 
 	const mealMatch = /^\/api\/plans\/([^/]+)\/meals\/(\d+)\/recipe$/.exec(path);
 	if (mealMatch?.[1] && mealMatch[2] && req.method === "POST") {
+		// A JSON content type forces a CORS preflight, so other sites cannot send this blindly
+		if (!req.headers.get("content-type")?.includes("application/json")) {
+			return json({ error: "Expected JSON" }, 415);
+		}
 		return saveMealAsRecipe(
 			decodeURIComponent(mealMatch[1]),
 			Number(mealMatch[2]),
@@ -324,7 +353,7 @@ const INGRESS_ADDRESS = "172.30.32.2";
 
 // Behind `tailscale serve`, requests from tailnet members carry the sender's login in a header that
 // Tailscale sets itself (and strips from anything the client sends); Funnel traffic has none. The
-// listener is bound to localhost so nothing but the Tailscale proxy can reach it.
+// listener is bound to a loopback address only the Tailscale proxy is pointed at.
 export function isAllowedTailnetUser(headers: Headers, allowedLogins: string[]): boolean {
 	const login = headers.get("tailscale-user-login")?.trim().toLowerCase();
 	return !!login && allowedLogins.includes(login);
@@ -338,8 +367,11 @@ export function startStandaloneUi(port: number, allowedLogins: string[]): void {
 	}
 	Bun.serve({
 		maxRequestBodySize: MAX_BACKUP_BYTES,
-		hostname: "127.0.0.1",
+		// 127.0.0.2, not 127.0.0.1: Tailscale's userspace networking forwards direct tailnet
+		// connections to 127.0.0.1, where a caller could set the login header themselves
+		hostname: process.env.RUOKA_UI_STANDALONE_HOST || "127.0.0.2",
 		port,
+		development: false,
 		async fetch(req) {
 			if (!isAllowedTailnetUser(req.headers, allowed)) {
 				logger.warn("Refused standalone recipe app request without an allowed Tailscale login");
@@ -361,6 +393,7 @@ export function startUiServer(port: number): void {
 		maxRequestBodySize: MAX_BACKUP_BYTES,
 		hostname: "0.0.0.0",
 		port,
+		development: false,
 		async fetch(req, server) {
 			const peer = server.requestIP(req)?.address;
 			if (peer !== INGRESS_ADDRESS && process.env.RUOKA_UI_ALLOW_ANY !== "1") {
