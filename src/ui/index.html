@@ -763,8 +763,11 @@ function storeParams(store) {
   return `storeId ${store.id}${name ? `, storeName "${name}"` : ""}, includeLocation: true`;
 }
 
+// Built in rather than a config default: Home Assistant keeps an option's saved value, so a changed default would never reach an existing install
+const BASE_RULES = "Never choose Xtra own-brand products. Only add vegetables to a dish if it normally has them; a side vegetable or salad is fine otherwise.";
+
 function withNote(text) {
-  return config.promptNote ? `${text}\n\n${config.promptNote}` : text;
+  return [text, BASE_RULES, config.promptNote].filter(Boolean).join("\n\n");
 }
 
 function cookPrompt(name, servings, source) {
