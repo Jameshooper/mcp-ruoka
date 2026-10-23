@@ -3,7 +3,7 @@ import * as z from "zod/v4";
 
 const clientId = process.env.OAUTH_CLIENT_ID ?? "";
 const clientSecret = process.env.OAUTH_CLIENT_SECRET ?? "";
-const TOKEN_EXPIRY = 7 * 24 * 3600; // 1 week
+const TOKEN_EXPIRY = 3600; // short so a leaked access token dies quickly; refresh tokens renew it silently
 const REFRESH_TOKEN_EXPIRY = 30 * 24 * 3600; // 30 days
 const CODE_TTL = 60_000; // 60 seconds in ms
 
