@@ -34,7 +34,7 @@ function isBrowserDead(err: unknown): boolean {
 // renderer. It cannot start as root, which is how the Home Assistant app's container runs, so
 // there Playwright's default of no sandbox stays; anywhere else it is used. A host without usable
 // namespaces fails the sandboxed launch, and that is retried without it, loudly.
-export function shouldUseSandbox(uid = process.getuid?.()): boolean {
+export function shouldUseSandbox(uid: number | undefined): boolean {
 	return uid !== undefined && uid !== 0;
 }
 
@@ -51,7 +51,7 @@ function launchOptions(sandboxed: boolean) {
 }
 
 async function launchOnce(): Promise<BrowserContext> {
-	const sandboxed = shouldUseSandbox();
+	const sandboxed = shouldUseSandbox(process.getuid?.());
 	try {
 		return await chromium.launchPersistentContext(dataDir, launchOptions(sandboxed));
 	} catch (err) {
@@ -62,7 +62,7 @@ async function launchOnce(): Promise<BrowserContext> {
 }
 
 async function launch(): Promise<void> {
-	logger.info({ dataDir, sandbox: shouldUseSandbox() }, "Launching browser");
+	logger.info({ dataDir, sandbox: shouldUseSandbox(process.getuid?.()) }, "Launching browser");
 	try {
 		context = await launchOnce();
 	} catch (err) {
