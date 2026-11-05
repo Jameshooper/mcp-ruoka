@@ -1,0 +1,14 @@
+{
+	"data": {
+		"product": {
+			"ean": "6416046511226",
+			"storeId": "613756972",
+			"allergens": [
+				{ "allergenTypeText": "Vehnä", "levelOfContainmentCode": "CONTAINS" },
+				{ "allergenTypeText": "Maapähkinä", "levelOfContainmentCode": "MAY_CONTAIN" },
+				{ "allergenTypeText": "Seesaminsiemen", "levelOfContainmentCode": "FREE_FROM" }
+			],
+			"ingredientStatement": "Vehnäjauho, sokeri, kasvirasva (palmu), kaakao. Voi sisältää pieniä määriä cashewpähkinää ja saksanpähkinää."
+		}
+	}
+}

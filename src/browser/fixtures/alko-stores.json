@@ -1,0 +1,25 @@
+{
+	"data": [
+		{
+			"id": "2102",
+			"name": "Alko Tampere Ratina",
+			"city": "Tampere",
+			"address": "Vuolteenkatu 1",
+			"postalCode": "33100"
+		},
+		{
+			"id": "2128",
+			"name": "Alko Tampere Lielahti",
+			"city": "TAMPERE",
+			"address": "Turvesuonkatu 4",
+			"postalCode": "33400"
+		},
+		{
+			"id": "2001",
+			"name": "Alko Helsinki Arkadia",
+			"city": "Helsinki",
+			"address": "Salomonkatu 1",
+			"postalCode": "00100"
+		}
+	]
+}

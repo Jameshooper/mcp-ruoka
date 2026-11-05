@@ -1,0 +1,29 @@
+{
+	"result": [
+		{
+			"id": "6408430000098",
+			"product": {
+				"ean": "6408430000098",
+				"localizedName": { "finnish": "Valio täysmaito 1 l" },
+				"images": ["https://public.keskofiles.com/f/k-ruoka/product/6408430000098"],
+				"mobilescan": {
+					"pricing": {
+						"normal": {
+							"price": 1.42,
+							"unitPrice": { "value": 1.42, "unit": "l", "contentSize": 1 }
+						}
+					}
+				},
+				"brand": { "name": "Valio" },
+				"category": { "localizedName": { "finnish": "Maidot" } }
+			}
+		},
+		{
+			"id": "2000000000001",
+			"product": {
+				"ean": "2000000000001",
+				"localizedName": { "finnish": "Pirkka luomumaito 1 l" }
+			}
+		}
+	]
+}

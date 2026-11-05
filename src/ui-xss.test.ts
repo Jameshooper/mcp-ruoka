@@ -1,10 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Browser, chromium } from "playwright";
 import * as z from "zod/v4";
+import { launchTestBrowser } from "./test-browser.ts";
 
 // The recipe panel runs inside Home Assistant's own web origin, so script injected through a
 // stored recipe would run with the user's Home Assistant session and could reach every device in
@@ -29,18 +28,7 @@ const PAYLOADS = [
 ];
 const evil = (i: number) => `${PAYLOADS[i % PAYLOADS.length]} #${i}`;
 
-// The browser that matches the installed Playwright, or a preinstalled one (CI images, sandboxes)
-async function launchBrowser(): Promise<Browser | null> {
-	try {
-		return await chromium.launch();
-	} catch {
-		const fallback = process.env.RUOKA_TEST_CHROMIUM ?? "/opt/pw-browsers/chromium";
-		if (!existsSync(fallback)) return null;
-		return chromium.launch({ executablePath: fallback }).catch(() => null);
-	}
-}
-
-const browser = await launchBrowser();
+const browser = await launchTestBrowser();
 let dir = "";
 let server: ReturnType<typeof Bun.serve> | null = null;
 

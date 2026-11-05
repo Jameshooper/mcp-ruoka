@@ -195,21 +195,44 @@ export async function searchProducts(
 		}
 	}
 
+	const result = toSearchResult(data, query, storeId);
+	logger.info({ query, resultCount: result.products.length }, "K-Ruoka search completed");
+	return result;
+}
+
+function toSearchResult(
+	data: z.infer<typeof ApiSearchResponseSchema>,
+	query: string,
+	storeId: string,
+): SearchResult {
 	if (data.error) {
 		throw new Error(`K-Ruoka API error: ${data.error.message}`);
 	}
-
 	const products = (data.result ?? []).map(parseProduct);
+	return { products, totalCount: products.length, query, storeId, chain: "k-ruoka" };
+}
 
-	logger.info({ query, resultCount: products.length }, "K-Ruoka search completed");
+function toStores(data: z.infer<typeof ApiStoresResponseSchema>, city?: string): Store[] {
+	const stores: Store[] = (data.results ?? [])
+		.filter((s) => s.isWebStore)
+		.map((s) => ({ id: s.id, name: s.name, chain: "k-ruoka" as const, location: s.location }));
+	if (!city) return stores;
+	const lower = city.toLowerCase();
+	return stores.filter((s) => s.location.toLowerCase().includes(lower));
+}
 
-	return {
-		products,
-		totalCount: products.length,
-		query,
-		storeId,
-		chain: "k-ruoka",
-	};
+// What the site's own fetch returned (or the block marker), read without a browser; exported so
+// saved responses can be checked offline
+export function parseSearchResponse(raw: unknown, query: string, storeId: string): SearchResult {
+	const data = SearchEvalResultSchema.parse(raw);
+	if (isBlocked(data)) throw new Error(`Blocked by Cloudflare (HTTP ${data._status})`);
+	return toSearchResult(data, query, storeId);
+}
+
+export function parseStoresResponse(raw: unknown, city?: string): Store[] {
+	const data = StoresEvalResultSchema.parse(raw);
+	if (isBlocked(data)) throw new Error(`Blocked by Cloudflare (HTTP ${data._status})`);
+	return toStores(data, city);
 }
 
 export async function getStores(city?: string): Promise<Store[]> {
@@ -226,19 +249,7 @@ export async function getStores(city?: string): Promise<Store[]> {
 		}
 	}
 
-	let stores: Store[] = (data.results ?? [])
-		.filter((s) => s.isWebStore)
-		.map((s) => ({
-			id: s.id,
-			name: s.name,
-			chain: "k-ruoka" as const,
-			location: s.location,
-		}));
-
-	if (city) {
-		const lower = city.toLowerCase();
-		stores = stores.filter((s) => s.location.toLowerCase().includes(lower));
-	}
+	const stores = toStores(data, city);
 
 	logger.info({ city: city ?? "all", storeCount: stores.length }, "K-Ruoka stores fetched");
 

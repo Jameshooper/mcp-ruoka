@@ -1,0 +1,20 @@
+{
+	"data": {
+		"searchStores": {
+			"totalCount": 3,
+			"cursor": "c2Vjb25k",
+			"stores": [
+				{
+					"id": "613756972",
+					"name": "Prisma Linnainmaa",
+					"location": { "address": { "postcodeName": { "default": "Tampere" } } }
+				},
+				{
+					"id": "513971200",
+					"name": "S-market Hervanta",
+					"location": { "address": { "postcodeName": { "default": "Tampere" } } }
+				}
+			]
+		}
+	}
+}

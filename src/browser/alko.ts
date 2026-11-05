@@ -199,19 +199,26 @@ export async function searchProducts(
 		throw new Error(`Alko search API HTTP ${response.status}`);
 	}
 
-	const raw = await response.json();
-	let parsed: z.infer<typeof ProductSearchResponseSchema>;
+	let result: SearchResult;
 	try {
-		parsed = ProductSearchResponseSchema.parse(raw);
+		result = parseSearchResponse(await response.json(), query, storeId);
 	} catch (err) {
 		logger.error({ err }, "Failed to parse Alko search response");
 		throw err;
 	}
 
+	logger.info({ query, resultCount: result.products.length }, "Alko search completed");
+	return result;
+}
+
+// Exported so saved responses can be checked offline
+export function parseSearchResponse(
+	raw: unknown,
+	query: string,
+	storeId: string | undefined,
+): SearchResult {
+	const parsed = ProductSearchResponseSchema.parse(raw);
 	const products = parsed.value.map(mapProduct);
-
-	logger.info({ query, resultCount: products.length }, "Alko search completed");
-
 	return {
 		products,
 		totalCount: parsed["@odata.count"] ?? products.length,
@@ -219,6 +226,15 @@ export async function searchProducts(
 		storeId: storeId ?? null,
 		chain: "alko",
 	};
+}
+
+export function parseStoresResponse(raw: unknown): Store[] {
+	return StoresResponseSchema.parse(raw).data.map((s) => ({
+		id: s.id,
+		name: s.name,
+		chain: "alko" as const,
+		location: s.city,
+	}));
 }
 
 const AlkoStoreSchema = z.object({
@@ -244,15 +260,7 @@ export async function getStores(city?: string): Promise<Store[]> {
 			throw new Error(`Alko stores API HTTP ${response.status}`);
 		}
 
-		const raw = await response.json();
-		const parsed = StoresResponseSchema.parse(raw);
-
-		storeCache = parsed.data.map((s) => ({
-			id: s.id,
-			name: s.name,
-			chain: "alko" as const,
-			location: s.city,
-		}));
+		storeCache = parseStoresResponse(await response.json());
 
 		logger.info({ storeCount: storeCache.length }, "Alko stores fetched");
 	}

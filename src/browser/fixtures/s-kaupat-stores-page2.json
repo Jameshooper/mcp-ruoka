@@ -1,0 +1,15 @@
+{
+	"data": {
+		"searchStores": {
+			"totalCount": 3,
+			"cursor": null,
+			"stores": [
+				{
+					"id": "542862476",
+					"name": "Prisma Kaleva",
+					"location": { "address": { "postcodeName": { "default": "Tampere" } } }
+				}
+			]
+		}
+	}
+}

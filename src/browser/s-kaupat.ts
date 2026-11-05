@@ -250,26 +250,30 @@ async function searchProductsUncached(
 		raw = await fetchProducts(query, storeId, limit, hash);
 	}
 
-	let parsed: z.infer<typeof SearchResponseSchema>;
+	let result: SearchResult;
 	try {
-		parsed = SearchResponseSchema.parse(raw);
+		result = parseSearchResponse(raw, query, storeId);
 	} catch (err) {
 		logger.error({ err, raw }, "Failed to parse S-Kaupat search response");
 		throw err;
 	}
 
-	const { total, productListItems } = parsed.data.store.products;
-	const products = productListItems.map(mapProduct);
-
-	if (products.length === 0) {
-		logger.info({ query, storeId, total }, "S-Kaupat returned 0 products");
+	if (result.products.length === 0) {
+		logger.info({ query, storeId, total: result.totalCount }, "S-Kaupat returned 0 products");
 	}
+	logger.info(
+		{ query, resultCount: result.products.length, total: result.totalCount },
+		"S-Kaupat search completed",
+	);
+	return result;
+}
 
-	logger.info({ query, resultCount: products.length, total }, "S-Kaupat search completed");
-
+// Separate from the request so saved responses can be checked offline (and by the weekly live check)
+export function parseSearchResponse(raw: unknown, query: string, storeId: string): SearchResult {
+	const { total, productListItems } = SearchResponseSchema.parse(raw).data.store.products;
 	return {
-		products,
-		totalCount: parsed.data.store.products.total,
+		products: productListItems.map(mapProduct),
+		totalCount: total,
 		query,
 		storeId,
 		chain: "s-kaupat",
@@ -318,7 +322,7 @@ async function fetchStoreSearchPage(
 	query: string | null,
 	cursor: string | null,
 	hash: string,
-): Promise<z.infer<typeof StoreSearchResponseSchema>> {
+): Promise<unknown> {
 	const url = new URL(API_URL);
 	url.searchParams.set("operationName", "RemoteStoreSearch");
 	url.searchParams.set("variables", JSON.stringify({ query, brand: null, cursor }));
@@ -348,7 +352,20 @@ async function fetchStoreSearchPage(
 		throw new Error("PERSISTED_QUERY_NOT_FOUND");
 	}
 
-	return StoreSearchResponseSchema.parse(raw);
+	return raw;
+}
+
+export function parseStorePage(raw: unknown): { stores: Store[]; cursor: string | null } {
+	const result = StoreSearchResponseSchema.parse(raw).data.searchStores;
+	return {
+		stores: result.stores.map((s) => ({
+			id: s.id,
+			name: s.name,
+			chain: "s-kaupat",
+			location: s.location.address.postcodeName.default,
+		})),
+		cursor: result.cursor,
+	};
 }
 
 const MAX_STORE_PAGES = 50;
@@ -359,19 +376,9 @@ async function fetchAllStoresWithHash(query: string | null, hash: string): Promi
 	let pages = 0;
 
 	do {
-		const parsed = await fetchStoreSearchPage(query, cursor, hash);
-		const result = parsed.data.searchStores;
-
-		for (const s of result.stores) {
-			stores.push({
-				id: s.id,
-				name: s.name,
-				chain: "s-kaupat",
-				location: s.location.address.postcodeName.default,
-			});
-		}
-
-		cursor = result.cursor;
+		const page = parseStorePage(await fetchStoreSearchPage(query, cursor, hash));
+		stores.push(...page.stores);
+		cursor = page.cursor;
 		pages++;
 	} while (cursor && pages < MAX_STORE_PAGES);
 

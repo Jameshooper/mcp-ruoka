@@ -1,0 +1,29 @@
+{
+	"data": {
+		"product": {
+			"ean": "6408430000098",
+			"storeId": "613756972",
+			"productDetails": {
+				"nutrients": [
+					{
+						"referenceQuantity": "1 annos (2 dl)",
+						"nutrients": [{ "name": "Energia", "value": "540 kJ / 128 kcal" }]
+					},
+					{
+						"referenceQuantity": "100 ml",
+						"nutrients": [
+							{ "name": "Energia", "value": "268 kJ / 64 kcal" },
+							{ "name": "Rasvaa", "value": "3,5 g" },
+							{ "name": "- josta tyydyttyneitä rasvoja", "value": "2,2 g" },
+							{ "name": "Hiilihydraattia", "value": "4,8 g" },
+							{ "name": "- josta sokereita", "value": "4,8 g" },
+							{ "name": "Proteiinia", "value": "3,3 g" },
+							{ "name": "Suola", "value": "0,1 g" },
+							{ "name": "Kalsium", "value": null }
+						]
+					}
+				]
+			}
+		}
+	}
+}

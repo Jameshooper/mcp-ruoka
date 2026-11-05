@@ -145,7 +145,9 @@ bun run dev
 
 The server runs on `http://localhost:3001/mcp` by default (Streamable HTTP). Pass `--stdio` for stdio transport. In HTTP mode it refuses to start without `OAUTH_CLIENT_ID`/`OAUTH_CLIENT_SECRET` or `MCP_AUTH_TOKEN`; set `ALLOW_NO_AUTH=1` to run it open on your own machine.
 
-`bun test` runs the unit and security tests, including a browser test that seeds script-injection payloads into every stored field and opens each screen (it uses Playwright's Chromium, or `RUOKA_TEST_CHROMIUM` / `/opt/pw-browsers/chromium` if that is not installed, and is skipped when no browser can start).
+`bun test` runs the unit, functional and security tests: retailer response parsing against saved responses (`src/browser/fixtures/`), a whole MCP conversation from ingredient check to rated meal plan with a fake product catalogue, browser tests of the recipe and meal-plan screens (search, filters, servings, ratings, ticking the shopping list, saving a meal, backup and import, the Claude buttons), and a browser test that seeds script-injection payloads into every stored field. The browser tests use Playwright's Chromium, or `RUOKA_TEST_CHROMIUM` / `/opt/pw-browsers/chromium` if that is not installed, and are skipped when no browser can start. Nothing in `bun test` contacts a retailer.
+
+`bun scripts/live-check.ts` calls K-Ruoka, S-Kaupat and Alko once each and reports whether their answers still read correctly; `.github/workflows/live-check.yml` runs it every Monday (and on demand from the Actions tab). It fails only when a response format changed; refusals from GitHub's shared addresses show as warnings. Each run uploads the raw responses it saw, for refreshing the fixtures.
 
 ## Environment variables
 

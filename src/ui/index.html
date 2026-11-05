@@ -1055,6 +1055,8 @@ function showDetail(id) {
   review.value = recipe.review || "";
   const status = el("span", { class: "meta" });
 
+  // The rating as last saved: "Save review" must not put back the one the screen opened with
+  let currentRating = recipe.rating || null;
   const stars = el("div", { class: "stars" });
   const drawStars = (rating) => {
     stars.replaceChildren(
@@ -1071,6 +1073,7 @@ function showDetail(id) {
         body: JSON.stringify({ rating, review: review.value }),
       });
       recipes = recipes.map((r) => (r.id === id ? updated : r));
+      currentRating = updated.rating || null;
       status.textContent = "Saved";
       drawStars(updated.rating || 0);
     } catch (error) {
@@ -1104,7 +1107,7 @@ function showDetail(id) {
       recipe.notes ? el("p", {}, recipe.notes) : null,
       el("h3", {}, "Your review"), review,
       el("div", { class: "row" },
-        el("button", { type: "button", class: "primary", onclick: () => save(recipe.rating || null) }, "Save review"),
+        el("button", { type: "button", class: "primary", onclick: () => save(currentRating) }, "Save review"),
         el("button", { type: "button", class: "danger", onclick: () => remove(recipe) }, "Delete recipe"),
       ),
     ),
@@ -1290,6 +1293,7 @@ function showPlan(id) {
   const review = el("textarea", { placeholder: "How did the week go?" });
   review.value = plan.review || "";
   const ratingStatus = el("span", { class: "meta" });
+  let currentRating = plan.rating || null;
   const stars = el("div", { class: "stars" });
   const drawStars = (rating) => {
     stars.replaceChildren(
@@ -1306,6 +1310,7 @@ function showPlan(id) {
         body: JSON.stringify({ rating, review: review.value }),
       });
       plans = plans.map((p) => (p.id === id ? updated : p));
+      currentRating = updated.rating || null;
       ratingStatus.textContent = "Saved";
       drawStars(updated.rating || 0);
     } catch (error) {
@@ -1350,7 +1355,7 @@ function showPlan(id) {
       el("h3", {}, "Your review"),
       review,
       el("div", { class: "row" },
-        el("button", { type: "button", class: "primary", onclick: () => saveRating(plan.rating || null) }, "Save review"),
+        el("button", { type: "button", class: "primary", onclick: () => saveRating(currentRating) }, "Save review"),
         el("button", { type: "button", class: "danger", onclick: () => removePlan(plan) }, "Delete plan"),
       ),
     ),
