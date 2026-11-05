@@ -9,15 +9,12 @@ import {
 } from "./auth.ts";
 import { logger } from "./logger.ts";
 import { alert } from "./notify.ts";
-import { allowedRedirects, FailureLimiter } from "./security.ts";
+import { allowedRedirects, FailureLimiter, limiterKey } from "./security.ts";
 
 export const limiter = new FailureLimiter();
 
-// Requests whose address could not be determined share one bucket
-const addressKey = (ip: string | null) => ip ?? "unknown";
-
 function recordFailure(ip: string | null): void {
-	const key = addressKey(ip);
+	const key = limiterKey(ip);
 	limiter.record(key);
 	if (limiter.blocked(key)) {
 		alert(
@@ -36,7 +33,7 @@ function tooMany(): Response {
 }
 
 export function authorizeResponse(url: URL, ip: string | null = null): Response {
-	if (limiter.blocked(addressKey(ip))) return tooMany();
+	if (limiter.blocked(limiterKey(ip))) return tooMany();
 	const responseType = url.searchParams.get("response_type");
 	const id = url.searchParams.get("client_id");
 	const redirectUri = url.searchParams.get("redirect_uri");
@@ -130,7 +127,7 @@ export function tokenResponse({ body, ip = null, authorization = null }: TokenRe
 		return Response.json(issueAccessToken(authTime));
 	}
 
-	if (limiter.blocked(addressKey(ip))) return tooMany();
+	if (limiter.blocked(limiterKey(ip))) return tooMany();
 	const invalidClient = () => {
 		recordFailure(ip);
 		return Response.json({ error: "invalid_client" }, { status: 401 });

@@ -14,9 +14,13 @@ const COOLDOWN_MS = {
 export type AlertKind = keyof typeof COOLDOWN_MS;
 
 const lastSent = new Map<AlertKind, number>();
+// Alerts dropped inside a cooldown are counted and reported with the next one, so using up the
+// cooldown on purpose cannot hide later events
+const suppressed = new Map<AlertKind, number>();
 
 export function resetNotifyCooldowns(): void {
 	lastSent.clear();
+	suppressed.clear();
 }
 
 export type NotifyResult = { ok: true } | { ok: false; error: string };
@@ -42,8 +46,14 @@ export async function sendNotification(
 
 	const now = options.now ?? Date.now();
 	const last = lastSent.get(kind);
-	if (last !== undefined && now - last < COOLDOWN_MS[kind]) return { ok: true };
+	if (last !== undefined && now - last < COOLDOWN_MS[kind]) {
+		suppressed.set(kind, (suppressed.get(kind) ?? 0) + 1);
+		return { ok: true };
+	}
 	lastSent.set(kind, now);
+	const held = suppressed.get(kind) ?? 0;
+	suppressed.delete(kind);
+	const text = held > 0 ? `${message} (${held} more since the last alert.)` : message;
 
 	try {
 		const response = await (options.fetchFn ?? fetch)(
@@ -51,7 +61,7 @@ export async function sendNotification(
 			{
 				method: "POST",
 				headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-				body: JSON.stringify({ title, message }),
+				body: JSON.stringify({ title, message: text }),
 				signal: AbortSignal.timeout(10_000),
 			},
 		);

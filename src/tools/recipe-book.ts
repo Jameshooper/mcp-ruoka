@@ -82,7 +82,7 @@ export function registerRecipeBookTools(server: McpServer): void {
 				"Get one saved recipe by id or name, optionally with the quantities scaled to a different number of servings.",
 			annotations: { readOnlyHint: true },
 			inputSchema: z.object({
-				recipe: z.string().min(1).describe("Recipe id or name"),
+				recipe: z.string().min(1).max(120).describe("Recipe id or name"),
 				servings: z.number().int().positive().max(100).optional().describe("Scale to this many"),
 			}),
 		},
@@ -100,7 +100,7 @@ export function registerRecipeBookTools(server: McpServer): void {
 				"Rate a saved recipe 1-5 stars, with an optional short review, when the user says how a meal turned out. The same rating can be set in the Recipes panel.",
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
 			inputSchema: z.object({
-				recipe: z.string().min(1).describe("Recipe id or name"),
+				recipe: z.string().min(1).max(120).describe("Recipe id or name"),
 				rating: z.number().int().min(1).max(5),
 				review: z.string().max(2000).optional().describe("What worked or what to change"),
 			}),
@@ -118,7 +118,7 @@ export function registerRecipeBookTools(server: McpServer): void {
 		{
 			description: "Delete a saved recipe by id or name. Only do this when the user asks.",
 			annotations: { readOnlyHint: false, destructiveHint: true },
-			inputSchema: z.object({ recipe: z.string().min(1).describe("Recipe id or name") }),
+			inputSchema: z.object({ recipe: z.string().min(1).max(120).describe("Recipe id or name") }),
 		},
 		async ({ recipe }) => {
 			const removed = await deleteRecipe(recipe);

@@ -14,6 +14,12 @@ function namesFile(): string {
 
 const keyOf = (chain: string, id: string) => `${chain}:${id}`;
 
+// The model can pass any store id and name, so the file is bounded: far more stores than the
+// three chains have, and names no longer than the tools accept
+const MAX_STORES = 3000;
+const MAX_ID_LENGTH = 64;
+const MAX_NAME_LENGTH = 120;
+
 let queue: Promise<unknown> = Promise.resolve();
 function exclusive<T>(task: () => Promise<T>): Promise<T> {
 	const run = queue.then(task, task);
@@ -41,13 +47,19 @@ export function rememberStores(
 		const names = await read();
 		let changed = false;
 		for (const store of stores) {
+			if (!store.name || store.id.length > MAX_ID_LENGTH) continue;
 			const key = keyOf(store.chain, store.id);
-			if (store.name && names[key] !== store.name) {
-				names[key] = store.name;
+			const name = store.name.slice(0, MAX_NAME_LENGTH);
+			if (names[key] !== name) {
+				// Re-inserted so the oldest-seen names are the ones dropped when full
+				delete names[key];
+				names[key] = name;
 				changed = true;
 			}
 		}
 		if (!changed) return;
+		const keys = Object.keys(names);
+		for (const key of keys.slice(0, Math.max(0, keys.length - MAX_STORES))) delete names[key];
 		const file = namesFile();
 		await mkdir(join(file, ".."), { recursive: true });
 		const temp = `${file}.tmp`;

@@ -30,31 +30,48 @@ function isBrowserDead(err: unknown): boolean {
 	);
 }
 
-async function launch(): Promise<void> {
-	logger.info({ dataDir }, "Launching browser");
+// Chromium's sandbox keeps a compromised page (the retailer sites run third-party scripts) inside the
+// renderer. It cannot start as root, which is how the Home Assistant app's container runs, so
+// there Playwright's default of no sandbox stays; anywhere else it is used. A host without usable
+// namespaces fails the sandboxed launch, and that is retried without it, loudly.
+export function shouldUseSandbox(uid = process.getuid?.()): boolean {
+	return uid !== undefined && uid !== 0;
+}
+
+function launchOptions(sandboxed: boolean) {
+	return {
+		headless: true,
+		chromiumSandbox: sandboxed,
+		// Containers (e.g. Home Assistant apps) often get a 64MB /dev/shm, which crashes Chromium
+		args: ["--disable-dev-shm-usage"],
+		userAgent:
+			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		locale: "fi-FI",
+	};
+}
+
+async function launchOnce(): Promise<BrowserContext> {
+	const sandboxed = shouldUseSandbox();
 	try {
-		context = await chromium.launchPersistentContext(dataDir, {
-			headless: true,
-			// Containers (e.g. Home Assistant apps) often get a 64MB /dev/shm, which crashes Chromium
-			args: ["--disable-dev-shm-usage"],
-			userAgent:
-				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-			locale: "fi-FI",
-		});
+		return await chromium.launchPersistentContext(dataDir, launchOptions(sandboxed));
+	} catch (err) {
+		if (!sandboxed) throw err;
+		logger.warn({ err }, "Sandboxed browser launch failed; retrying WITHOUT the Chromium sandbox");
+		return chromium.launchPersistentContext(dataDir, launchOptions(false));
+	}
+}
+
+async function launch(): Promise<void> {
+	logger.info({ dataDir, sandbox: shouldUseSandbox() }, "Launching browser");
+	try {
+		context = await launchOnce();
 	} catch (err) {
 		// Stale lock files or corrupted profile from unclean shutdown
 		logger.warn({ err }, "Browser launch failed, cleaning data dir and retrying");
 		if (existsSync(dataDir)) {
 			rmSync(dataDir, { recursive: true, force: true });
 		}
-		context = await chromium.launchPersistentContext(dataDir, {
-			headless: true,
-			// Containers (e.g. Home Assistant apps) often get a 64MB /dev/shm, which crashes Chromium
-			args: ["--disable-dev-shm-usage"],
-			userAgent:
-				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-			locale: "fi-FI",
-		});
+		context = await launchOnce();
 	}
 	logger.info("Browser launched");
 }

@@ -35,7 +35,7 @@ import type { AllergenCheck, ProductLocation } from "../types.ts";
 import { CALL_BUDGET_MS, mapPool, resolveIngredient } from "./recipe.ts";
 
 const MealSchema = z.object({
-	name: z.string().min(1).describe("Label for the meal, e.g. 'Mon dinner'"),
+	name: z.string().min(1).max(120).describe("Label for the meal, e.g. 'Mon dinner'"),
 	servings: z.number().int().positive().max(100).describe("How many portions this meal makes"),
 	dish: z
 		.string()
@@ -44,6 +44,7 @@ const MealSchema = z.object({
 		.describe("What the dish is called, e.g. 'Chicken curry' (the name is only the slot)"),
 	recipe: z
 		.string()
+		.max(120)
 		.optional()
 		.describe("Id or name of a saved recipe; its quantities are scaled to `servings`"),
 	ingredients: z
@@ -64,7 +65,7 @@ const MealSchema = z.object({
 		"Optional override; by default calories and macros are calculated from the store's nutrition labels for the chosen products",
 	),
 	steps: z
-		.array(z.string().min(1))
+		.array(z.string().min(1).max(2000))
 		.max(40)
 		.optional()
 		.describe("The method for an inline meal as ordered steps (a saved recipe brings its own)"),
@@ -244,7 +245,7 @@ export function registerMealPlanTool(server: McpServer): void {
 			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]),
-				storeId: z.string().min(1).describe("Store ID from get_stores"),
+				storeId: z.string().min(1).max(64).describe("Store ID from get_stores"),
 				storeName: z
 					.string()
 					.min(1)
@@ -265,7 +266,7 @@ export function registerMealPlanTool(server: McpServer): void {
 					.default("cheapest")
 					.describe("How to choose between pack sizes: lowest price, or least value left over"),
 				avoidAllergens: z
-					.array(z.string().min(2))
+					.array(z.string().min(2).max(60))
 					.max(15)
 					.optional()
 					.describe("Finnish and English terms to keep out, as in find_recipe_ingredients"),

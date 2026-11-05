@@ -163,8 +163,22 @@ export async function fetchWithRetry(url: URL, init: RequestInit): Promise<Respo
 export function memoizedLookup<T>(
 	ttlMs: number,
 	shouldCache: (value: T) => boolean,
+	maxEntries = 5000,
 ): (key: string, produce: () => Promise<T>) => Promise<T> {
 	const cache = new Map<string, { value: T; expiresAt: number }>();
+
+	// Expired answers were never removed, so memory grew with every distinct product ever looked up
+	function store(key: string, value: T): void {
+		const now = Date.now();
+		cache.delete(key);
+		cache.set(key, { value, expiresAt: now + ttlMs });
+		if (cache.size <= maxEntries) return;
+		for (const [k, entry] of cache) if (entry.expiresAt <= now) cache.delete(k);
+		for (const k of cache.keys()) {
+			if (cache.size <= maxEntries) break;
+			cache.delete(k);
+		}
+	}
 	const inflight = new Map<string, Promise<T>>();
 
 	return (key, produce) => {
@@ -176,7 +190,7 @@ export function memoizedLookup<T>(
 
 		const promise = produce()
 			.then((value) => {
-				if (shouldCache(value)) cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+				if (shouldCache(value)) store(key, value);
 				return value;
 			})
 			.finally(() => inflight.delete(key));

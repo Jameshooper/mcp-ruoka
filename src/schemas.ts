@@ -1,9 +1,13 @@
 import * as z from "zod/v4";
 
 export const IngredientSchema = z.object({
-	english: z.string().min(1).describe("Ingredient as written in the recipe (e.g., 'heavy cream')"),
+	english: z
+		.string()
+		.min(1)
+		.max(300)
+		.describe("Ingredient as written in the recipe (e.g., 'heavy cream')"),
 	finnish: z
-		.array(z.string().min(1))
+		.array(z.string().min(1).max(100))
 		.min(1)
 		.max(5)
 		.describe(
@@ -27,6 +31,12 @@ export const IngredientSchema = z.object({
 });
 
 export type Ingredient = z.infer<typeof IngredientSchema>;
+
+// Reading back what is already saved must never fail on limits added after it was written
+export const StoredIngredientSchema = IngredientSchema.extend({
+	english: z.string().min(1),
+	finnish: z.array(z.string().min(1)).min(1).max(5),
+});
 
 export const PROTEIN_CATEGORIES = [
 	"white_meat",
