@@ -27,3 +27,24 @@ test("a damaged file does not break lookups", async () => {
 	await writeFile(join(dir, "stores.json"), "{nope");
 	expect(await getStoreNames()).toEqual({});
 });
+
+// API-08
+test("remembered store names are bounded in number and length", async () => {
+	const { rememberStores, getStoreNames } = await import("./store-names.ts");
+	await rememberStores([
+		{ chain: "s-kaupat", id: "9".repeat(65), name: "Too long an id" },
+		{ chain: "s-kaupat", id: "42", name: "n".repeat(500) },
+	]);
+	const names = await getStoreNames();
+	expect(Object.keys(names).some((k) => k.includes("9".repeat(65)))).toBe(false);
+	expect(names["s-kaupat:42"]?.length).toBe(120);
+
+	await rememberStores(
+		Array.from({ length: 3100 }, (_, i) => ({ chain: "k-ruoka", id: `N${i}`, name: `Store ${i}` })),
+	);
+	const after = await getStoreNames();
+	expect(Object.keys(after).length).toBeLessThanOrEqual(3000);
+	// the newest names are the ones kept
+	expect(after["k-ruoka:N3099"]).toBe("Store 3099");
+	expect(after["k-ruoka:N0"]).toBeUndefined();
+});

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -438,4 +438,285 @@ test("other websites cannot make changes, even with a body that looks like JSON"
 			new Request("http://x/api/recipes/x", { method: "DELETE", headers: { Origin: "http://x" } }),
 		),
 	).toBe(false);
+});
+
+// INP-03
+test("hostile paths give a clean 400 or 404, never a file or a crash", async () => {
+	const { saveRecipe } = await import("./recipe-book.ts");
+	const { handleUiRequest } = await import("./ui-server.ts");
+	await saveRecipe(recipe);
+	const statusOf = async (path: string, method = "GET") =>
+		(await handleUiRequest(new Request(`http://x${path}`, { method }))).status;
+
+	for (const path of [
+		"/api/recipes/%E0%A4%A",
+		"/api/plans/%ZZ",
+		"/api/backups/%E0%A4%A",
+		"/api/plans/%E0/rating",
+	]) {
+		expect(await statusOf(path)).toBe(400);
+	}
+	for (const path of [
+		"/icons/..%2Findex.html",
+		"/api/backups/..%2Frecipes.json",
+		"/api/backups/ruoka-daily-x.zip%00.json",
+		"/api/recipes/..%2F..%2Fetc%2Fpasswd",
+		`/api/recipes/${"a".repeat(5000)}`,
+	]) {
+		expect([400, 404]).toContain(await statusOf(path));
+	}
+	expect(await statusOf("/api/recipes/%E0%A4%A", "DELETE")).toBe(400);
+});
+
+// API-01
+test("unexpected methods are refused and change nothing", async () => {
+	const { saveRecipe, listRecipes } = await import("./recipe-book.ts");
+	const { savePlan, listPlans } = await import("./plan-book.ts");
+	const { handleUiRequest } = await import("./ui-server.ts");
+	await saveRecipe(recipe);
+	await savePlan("Method target", SNAPSHOT);
+	const before = JSON.stringify([await listRecipes(), await listPlans()]);
+	const json = { "Content-Type": "application/json" };
+	const attempts: Array<[string, string]> = [
+		["POST", "/api/recipes/kanacurry"],
+		["PUT", "/api/recipes/kanacurry"],
+		["PATCH", "/api/recipes/kanacurry/rating"],
+		["DELETE", "/api/recipes/kanacurry/rating"],
+		["PUT", "/api/plans/method-target"],
+		["POST", "/api/plans/method-target/checked"],
+		["DELETE", "/api/plans/method-target/rating"],
+		["DELETE", "/api/backup"],
+		["PUT", "/api/backups/ruoka-daily-2026-01-01.zip"],
+	];
+	for (const [method, path] of attempts) {
+		const response = await handleUiRequest(
+			new Request(`http://x${path}`, { method, headers: json, body: "{}" }),
+		);
+		expect([404, 405]).toContain(response.status);
+	}
+	expect(JSON.stringify([await listRecipes(), await listPlans()])).toBe(before);
+});
+
+// API-06
+test("request bodies cannot set fields beyond the ones each endpoint allows", async () => {
+	const { saveRecipe, findRecipe } = await import("./recipe-book.ts");
+	const { savePlan, findPlan } = await import("./plan-book.ts");
+	const { handleUiRequest } = await import("./ui-server.ts");
+	await saveRecipe(recipe);
+	const original = await findRecipe("kanacurry");
+	await handleUiRequest(
+		put("/api/recipes/kanacurry/rating", {
+			rating: 5,
+			id: "hijacked",
+			name: "Renamed",
+			createdAt: "1999-01-01T00:00:00.000Z",
+			steps: [],
+			servings: 99,
+		}),
+	);
+	const after = await findRecipe("kanacurry");
+	expect(after?.rating).toBe(5);
+	expect([after?.id, after?.name, after?.createdAt, after?.servings]).toEqual([
+		original?.id,
+		original?.name,
+		original?.createdAt,
+		original?.servings,
+	]);
+	expect(after?.steps).toEqual(original?.steps);
+	expect(await findRecipe("hijacked")).toBeUndefined();
+
+	await savePlan("Mass target", SNAPSHOT);
+	const ticked = z
+		.object({ checked: z.array(z.string()) })
+		.parse(
+			await (
+				await handleUiRequest(
+					put("/api/plans/mass-target/checked", { checked: ["211", "999", "../x"] }),
+				)
+			).json(),
+		);
+	// only products that are on the plan's list can be ticked
+	expect(ticked.checked).toEqual(["211"]);
+	await handleUiRequest(
+		put("/api/plans/mass-target/rating", { rating: 4, name: "Other", meals: [] }),
+	);
+	const plan = await findPlan("mass-target");
+	expect([plan?.rating, plan?.name, plan?.meals.length]).toEqual([4, "Mass target", 1]);
+});
+
+// INP-06
+test("scaling only accepts the same servings range a recipe can have", async () => {
+	const { saveRecipe } = await import("./recipe-book.ts");
+	const { handleUiRequest } = await import("./ui-server.ts");
+	await saveRecipe(recipe);
+	const amountAt = async (servings: string) =>
+		RecipeJson.parse(
+			await (
+				await handleUiRequest(new Request(`http://x/api/recipes/kanacurry?servings=${servings}`))
+			).json(),
+		).ingredients[0]?.quantity?.amount;
+	expect(await amountAt("100")).toBe(10_000);
+	for (const servings of ["101", "1e308", "100000", "-4", "0", "2.5", "abc"]) {
+		expect(await amountAt(servings)).toBe(400);
+	}
+});
+
+// INP-07
+test("plans whose names slugify alike stay separate", async () => {
+	const { savePlan, listPlans } = await import("./plan-book.ts");
+	const first = await savePlan("Week 1", SNAPSHOT);
+	const second = await savePlan("Week 1!", SNAPSHOT);
+	expect(second.replaced).toBe(false);
+	expect(second.plan.id).toBe(`${first.plan.id}-2`);
+	const again = await savePlan("WEEK 1", SNAPSHOT);
+	expect([again.replaced, again.plan.id]).toEqual([true, first.plan.id]);
+	expect(
+		(await listPlans())
+			.filter((p) => p.name.toLowerCase().startsWith("week 1"))
+			.map((p) => p.name)
+			.sort(),
+	).toEqual(["WEEK 1", "Week 1!"]);
+});
+
+// AZ-02, SESS-05, SESS-06, SESS-07
+test("each front door checks its own identity and sends the right protective headers", async () => {
+	const { createIngressFetch, createStandaloneFetch } = await import("./ui-server.ts");
+	const ingress = createIngressFetch(false);
+	const page = new Request("http://x/", { headers: { Origin: "https://evil.example" } });
+
+	for (const peer of ["127.0.0.1", "172.30.32.1", "172.30.33.5", "192.168.1.10", undefined]) {
+		expect((await ingress(page, peer)).status).toBe(403);
+	}
+	const viaIngress = await ingress(page, "172.30.32.2");
+	expect(viaIngress.status).toBe(200);
+	expect(viaIngress.headers.get("x-content-type-options")).toBe("nosniff");
+	// Home Assistant shows the panel in its own page, so ingress must stay frameable
+	expect(viaIngress.headers.get("x-frame-options")).toBeNull();
+
+	const standalone = createStandaloneFetch(["owner@example.com"]);
+	const asOwner = (path: string, init: RequestInit = {}) =>
+		standalone(
+			new Request(`https://ruoka.example.ts.net:8443${path}`, {
+				...init,
+				headers: { "Tailscale-User-Login": "owner@example.com", ...init.headers },
+			}),
+		);
+	const app = await asOwner("/");
+	expect(app.status).toBe(200);
+	expect(app.headers.get("x-frame-options")).toBe("DENY");
+	expect(app.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+	expect(
+		(await standalone(new Request("https://ruoka.example.ts.net:8443/api/recipes"))).status,
+	).toBe(403);
+	expect(
+		(
+			await standalone(
+				new Request("https://ruoka.example.ts.net:8443/api/recipes", {
+					headers: { "Tailscale-User-Login": "someone@else.com" },
+				}),
+			)
+		).status,
+	).toBe(403);
+	// a browser's preflight carries no login header, so a foreign page cannot add one
+	expect(
+		(
+			await standalone(
+				new Request("https://ruoka.example.ts.net:8443/api/recipes", {
+					method: "OPTIONS",
+					headers: {
+						Origin: "https://evil.example",
+						"Access-Control-Request-Headers": "tailscale-user-login",
+					},
+				}),
+			)
+		).status,
+	).toBe(403);
+
+	// no route grants cross-origin reads or sets cookies
+	for (const path of [
+		"/",
+		"/api/recipes",
+		"/api/plans",
+		"/api/config",
+		"/api/stores",
+		"/api/backups",
+		"/api/backup",
+	]) {
+		const response = await asOwner(path, { headers: { Origin: "https://evil.example" } });
+		expect(response.headers.get("access-control-allow-origin")).toBeNull();
+		expect(response.headers.get("set-cookie")).toBeNull();
+		await response.body?.cancel();
+	}
+});
+
+// CONF-04, DEV-01
+test("the Supervisor token and other secrets never appear in answers, backups or logs", async () => {
+	const canaries = {
+		SUPERVISOR_TOKEN: "canary-supervisor-7f3a",
+		OAUTH_CLIENT_SECRET_CANARY: "canary-oauth-secret-91c2",
+		MCP_AUTH_TOKEN_CANARY: "canary-static-token-55d0",
+	};
+	const saved = { ...process.env };
+	Object.assign(process.env, canaries, { RUOKA_NOTIFY_SERVICE: "notify.mobile_app_phone" });
+	const lines: string[] = [];
+	const realFetch = globalThis.fetch;
+	const stderr = spyOn(process.stderr, "write").mockImplementation((chunk) => {
+		lines.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+		return true;
+	});
+	const seen: string[] = [];
+	try {
+		const { saveRecipe } = await import("./recipe-book.ts");
+		const { handleUiRequest } = await import("./ui-server.ts");
+		const { resetNotifyCooldowns } = await import("./notify.ts");
+		const { unzipFiles } = await import("./zip.ts");
+		await saveRecipe(recipe);
+		// the Supervisor failing in every way the notify code handles
+		for (const answer of [
+			() => new Response("no", { status: 401 }),
+			() => new Response("err", { status: 500 }),
+			() => {
+				throw new Error("down");
+			},
+		]) {
+			resetNotifyCooldowns();
+			globalThis.fetch = Object.assign(async () => answer(), { preconnect: () => {} });
+			const r = await handleUiRequest(
+				new Request("http://x/api/notify/test", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: "{}",
+				}),
+			);
+			seen.push(await r.text());
+		}
+		globalThis.fetch = realFetch;
+		for (const path of [
+			"/",
+			"/api/recipes",
+			"/api/config",
+			"/api/stores",
+			"/api/plans",
+			"/api/backups",
+			"/api/recipes/kanacurry",
+		]) {
+			seen.push(await (await handleUiRequest(new Request(`http://x${path}`))).text());
+		}
+		const backup = await handleUiRequest(new Request("http://x/api/backup"));
+		const files = unzipFiles(new Uint8Array(await backup.arrayBuffer()));
+		expect([...files.keys()].sort()).toEqual([
+			"manifest.json",
+			"plans.json",
+			"recipes.json",
+			"stores.json",
+		]);
+		for (const data of files.values()) seen.push(new TextDecoder().decode(data));
+	} finally {
+		stderr.mockRestore();
+		globalThis.fetch = realFetch;
+		for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+		Object.assign(process.env, saved);
+	}
+	const everything = [...seen, ...lines].join("\n");
+	for (const canary of Object.values(canaries)) expect(everything).not.toContain(canary);
 });

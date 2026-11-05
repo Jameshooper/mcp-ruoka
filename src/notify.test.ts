@@ -52,3 +52,35 @@ test("reports a rejected delivery", async () => {
 	const result = await sendNotification("test", "a", "b", { ...base, fetchFn });
 	expect(result).toEqual({ ok: false, error: "Home Assistant answered HTTP 401" });
 });
+
+// DEV-02, DEV-03
+test("only the configured notify service is called, with a title and message only", async () => {
+	const { calls, fetchFn } = recorder();
+	await sendNotification("test", "t", "m", { ...base, fetchFn });
+	expect(calls).toHaveLength(1);
+	expect(calls[0]?.url).toMatch(/^http:\/\/supervisor\/core\/api\/services\/notify\/[a-z0-9_]+$/);
+	expect(Object.keys(JSON.parse(calls[0]?.body ?? "{}")).sort()).toEqual(["message", "title"]);
+	for (const service of [
+		"lock.unlock",
+		"notify.x/../../services/lock/unlock",
+		"notify.MOBILE",
+		"notify.a b",
+		"homeassistant.restart",
+	]) {
+		await sendNotification("test", "t", "m", { service, token: "tok", fetchFn });
+	}
+	expect(calls).toHaveLength(1);
+});
+
+test("alerts held back by the cooldown are counted in the next one", async () => {
+	const { calls, fetchFn } = recorder();
+	const send = (now: number) =>
+		sendNotification("ip-refused", "a", "Refused.", { ...base, fetchFn, now });
+	await send(0);
+	for (let i = 1; i <= 4; i++) await send(i * 60_000);
+	await send(7 * 60 * 60_000);
+	expect(calls).toHaveLength(2);
+	expect(JSON.parse(calls[1]?.body ?? "{}").message).toBe(
+		"Refused. (4 more since the last alert.)",
+	);
+});

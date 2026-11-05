@@ -4,6 +4,7 @@ import {
 	clientAddress,
 	FailureLimiter,
 	ipAllowed,
+	limiterKey,
 	parseCidrs,
 } from "./security.ts";
 
@@ -75,4 +76,21 @@ test("only Claude's callbacks are allowed unless more are configured", () => {
 	expect(allowedRedirects("")).toContain("https://claude.ai/api/mcp/auth_callback");
 	expect(allowedRedirects("")).not.toContain("https://evil.example/cb");
 	expect(allowedRedirects("https://app.example/cb")).toContain("https://app.example/cb");
+});
+
+test("limiter buckets: IPv4 per address, IPv6 per /64, mapped IPv4 as IPv4", () => {
+	expect(limiterKey("2001:db8:1:2::1")).toBe(limiterKey("2001:db8:1:2:ffff:ffff:ffff:ffff"));
+	expect(limiterKey("2001:db8:1:2::1")).not.toBe(limiterKey("2001:db8:1:3::1"));
+	expect(limiterKey("203.0.113.1")).not.toBe(limiterKey("203.0.113.2"));
+	expect(limiterKey("::ffff:203.0.113.1")).toBe(limiterKey("203.0.113.1"));
+	expect(limiterKey(null)).toBe("unknown");
+	expect(limiterKey("x".repeat(500)).length).toBeLessThan(80);
+});
+
+test("odd allowlist entries fail loudly or parse predictably", () => {
+	expect(() => parseCidrs("fe80::1%eth0")).toThrow();
+	expect(() => parseCidrs("1.2.3")).toThrow();
+	expect(() => parseCidrs("256.0.0.1")).toThrow();
+	// leading zeros are read as decimal, not octal
+	expect(ipAllowed("10.0.0.8", parseCidrs("010.000.000.008"))).toBe(true);
 });
