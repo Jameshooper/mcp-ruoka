@@ -1,0 +1,39 @@
+name: Weekly retailer live check
+
+# Calls K-Ruoka, S-Kaupat and Alko once each to catch response-format changes before they break a
+# real conversation. Weekly and on demand only: never on push, so the retailers see a handful of
+# requests a week. Fails only when a response no longer reads as expected; refusals from GitHub's
+# shared addresses are shown as warnings.
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-check:
+    # Playwright 1.59 cannot install Chromium on ubuntu-latest (26.04) yet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - run: bun scripts/live-check.ts
+        env:
+          LIVE_CHECK_OUT: live-check-output
+          BROWSER_DATA_DIR: ${{ runner.temp }}/browser
+          LOG_LEVEL: warn
+      # The raw answers, to refresh src/browser/fixtures when a format changes
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: retailer-responses
+          path: live-check-output
+          retention-days: 14
+          if-no-files-found: ignore
