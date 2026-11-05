@@ -1,0 +1,51 @@
+{
+	"data": {
+		"store": {
+			"products": {
+				"total": 47,
+				"productListItems": [
+					{
+						"product": {
+							"name": "Valio täysmaito 1 l",
+							"ean": "6408430000098",
+							"slug": "valio-taysmaito-1-l",
+							"price": 1.45,
+							"brandName": "Valio",
+							"pricing": {
+								"currentPrice": 1.39,
+								"comparisonPrice": 1.39,
+								"comparisonUnit": "LTR",
+								"campaignPrice": null
+							},
+							"productDetails": {
+								"productImages": {
+									"mainImage": {
+										"urlTemplate": "https://cdn.s-cloud.fi/v1/{MODIFIERS}/6408430000098.{EXTENSION}"
+									}
+								}
+							},
+							"hierarchyPath": [{ "name": "Maito" }, { "name": "Maitotuotteet" }]
+						}
+					},
+					{
+						"product": {
+							"name": "Rainbow kevytmaito 1,5 l",
+							"ean": "6415712000013",
+							"slug": null,
+							"price": 1.49,
+							"brandName": null,
+							"pricing": {
+								"currentPrice": null,
+								"comparisonPrice": null,
+								"comparisonUnit": null,
+								"campaignPrice": null
+							},
+							"productDetails": { "productImages": { "mainImage": null } },
+							"hierarchyPath": []
+						}
+					}
+				]
+			}
+		}
+	}
+}

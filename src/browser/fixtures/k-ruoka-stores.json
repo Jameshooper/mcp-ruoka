@@ -1,0 +1,36 @@
+{
+	"results": [
+		{
+			"id": "N110",
+			"name": "K-Citymarket Tampere Lielahti",
+			"chain": "kcm",
+			"chainName": "K-Citymarket",
+			"location": "Tampere",
+			"isWebStore": true
+		},
+		{
+			"id": "N205",
+			"name": "K-Supermarket Hervanta",
+			"chain": "ksm",
+			"chainName": "K-Supermarket",
+			"location": "Tampere",
+			"isWebStore": true
+		},
+		{
+			"id": "N999",
+			"name": "K-Market Kioski",
+			"chain": "km",
+			"chainName": "K-Market",
+			"location": "Tampere",
+			"isWebStore": false
+		},
+		{
+			"id": "N301",
+			"name": "K-Citymarket Helsinki Ruoholahti",
+			"chain": "kcm",
+			"chainName": "K-Citymarket",
+			"location": "Helsinki",
+			"isWebStore": true
+		}
+	]
+}

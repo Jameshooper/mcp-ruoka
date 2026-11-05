@@ -1,0 +1,25 @@
+{
+	"@odata.count": 812,
+	"value": [
+		{
+			"id": "001234",
+			"name": "Ruby Valley Merlot 2022",
+			"price": 9.98,
+			"abv": 13.5,
+			"volume": 0.75,
+			"countryName": "Chile",
+			"productGroupName": ["punaviinit"],
+			"storeId": ["2102"]
+		},
+		{
+			"id": "005678",
+			"name": "Hanaviini Punainen",
+			"price": 29.9,
+			"abv": 12.5,
+			"volume": 3,
+			"countryName": "Espanja",
+			"productGroupName": ["punaviinit", "hanapakkaukset"]
+		},
+		{ "id": "009999", "name": "Erikoiserä ilman hintaa", "price": null }
+	]
+}
