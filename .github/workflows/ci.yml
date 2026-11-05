@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Playwright 1.59 cannot install Chromium on ubuntu-latest (26.04) yet
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bunx biome ci .
+      - run: bun run typecheck
+      # The script-injection test drives a real browser
+      - run: bunx playwright install --with-deps chromium
+      - run: bun test
+      - run: bun audit --audit-level=high

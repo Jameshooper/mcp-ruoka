@@ -17,6 +17,7 @@ export function registerStoresTool(server: McpServer): void {
 			inputSchema: z.object({
 				city: z
 					.string()
+					.max(100)
 					.optional()
 					.describe("Filter stores by city name (e.g., 'Helsinki', 'Tampere')"),
 				chain: z

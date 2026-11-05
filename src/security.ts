@@ -65,7 +65,7 @@ export class FailureLimiter {
 
 // ---- IP allowlist -------------------------------------------------------------------------
 
-interface Cidr {
+export interface Cidr {
 	family: 4 | 6;
 	network: bigint;
 	bits: number;
@@ -130,6 +130,17 @@ export function ipAllowed(ip: string | null, cidrs: Cidr[]): boolean {
 		const shift = total - BigInt(cidr.bits);
 		return (parsed.value >> shift) << shift === cidr.network;
 	});
+}
+
+// The limiter's bucket for an address. An IPv6 user typically controls a whole /64 (2^64
+// addresses), so per-address counting would give them unlimited attempts and let them flush
+// everyone else out of the table; the /64 is the unit instead.
+export function limiterKey(ip: string | null): string {
+	if (!ip) return "unknown";
+	const parsed = parseIp(ip);
+	if (!parsed) return `raw:${ip.slice(0, 64)}`;
+	if (parsed.family === 4) return `v4:${parsed.value.toString(16)}`;
+	return `v6:${(parsed.value >> 64n).toString(16)}/64`;
 }
 
 export interface ClientAddress {

@@ -8,6 +8,7 @@ import {
 	IngredientSchema,
 	NutritionSchema,
 	ProteinSchema,
+	StoredIngredientSchema,
 	StoredNutritionSchema,
 } from "./schemas.ts";
 
@@ -16,7 +17,7 @@ export const RecipeInputSchema = z.object({
 	servings: z.number().int().positive().max(100),
 	ingredients: z.array(IngredientSchema).min(1).max(40),
 	steps: z
-		.array(z.string().min(1))
+		.array(z.string().min(1).max(2000))
 		.min(1)
 		.max(40)
 		.describe(
@@ -49,6 +50,7 @@ export const RecipeInputSchema = z.object({
 
 const RecipeSchema = RecipeInputSchema.extend({
 	id: z.string().min(1),
+	ingredients: z.array(StoredIngredientSchema).min(1).max(40),
 	// Recipes saved before the method was required may have none
 	steps: z.array(z.string().min(1)).max(40).default([]),
 	nutrition: StoredNutritionSchema.optional(),

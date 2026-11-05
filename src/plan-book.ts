@@ -5,8 +5,8 @@ import * as z from "zod/v4";
 import { type ImportCounts, mergeById, uniqueId } from "./recipe-book.ts";
 import {
 	type ImportMode,
-	IngredientSchema,
 	ProteinSchema,
+	StoredIngredientSchema,
 	StoredNutritionSchema,
 } from "./schemas.ts";
 
@@ -33,7 +33,7 @@ const MealSchema = z.object({
 	prepMinutes: z.number().optional(),
 	cookMinutes: z.number().optional(),
 	// The meal's ingredients totalled for its servings, so it can be saved as a recipe later
-	ingredients: z.array(IngredientSchema).default([]),
+	ingredients: z.array(StoredIngredientSchema).default([]),
 	servings: z.number(),
 	recipe: z.string().optional(),
 	protein: ProteinSchema.optional(),

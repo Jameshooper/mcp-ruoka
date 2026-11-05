@@ -359,7 +359,7 @@ export function registerRecipeTool(server: McpServer): void {
 			annotations: { readOnlyHint: true, openWorldHint: true },
 			inputSchema: z.object({
 				chain: z.enum(["k-ruoka", "s-kaupat"]).describe("Which chain's store to check"),
-				storeId: z.string().min(1).describe("Store ID from get_stores"),
+				storeId: z.string().min(1).max(64).describe("Store ID from get_stores"),
 				storeName: z
 					.string()
 					.min(1)
@@ -370,7 +370,7 @@ export function registerRecipeTool(server: McpServer): void {
 					),
 				ingredients: z.array(IngredientSchema).min(1).max(40),
 				avoidAllergens: z
-					.array(z.string().min(2))
+					.array(z.string().min(2).max(60))
 					.max(15)
 					.optional()
 					.describe(

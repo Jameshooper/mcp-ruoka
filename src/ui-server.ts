@@ -69,6 +69,20 @@ function json(body: unknown, status = 200): Response {
 	return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
+// A malformed escape (e.g. "%E0%A4%A") makes decodeURIComponent throw; that is the caller's mistake
+class BadPathError extends Error {}
+
+function decodeSegment(segment: string): string {
+	try {
+		return decodeURIComponent(segment);
+	} catch {
+		throw new BadPathError("Malformed path");
+	}
+}
+
+// Same limit as a recipe's own servings
+const MAX_SCALED_SERVINGS = 100;
+
 // Saves one meal of a plan to the recipe book and links the meal to it. An existing recipe with
 // the same name is only replaced when the caller says so.
 async function saveMealAsRecipe(
@@ -176,6 +190,15 @@ export function isCrossSiteChange(req: Request): boolean {
 
 // Paths are relative so the page works behind Home Assistant's ingress prefix
 export async function handleUiRequest(req: Request): Promise<Response> {
+	try {
+		return await routeUiRequest(req);
+	} catch (error) {
+		if (error instanceof BadPathError) return json({ error: error.message }, 400);
+		throw error;
+	}
+}
+
+async function routeUiRequest(req: Request): Promise<Response> {
 	const url = new URL(req.url);
 	const path = url.pathname.replace(/\/+$/, "") || "/";
 
@@ -236,7 +259,7 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 
 	const backupFile = /^\/api\/backups\/([^/]+)$/.exec(path);
 	if (backupFile?.[1] && req.method === "GET") {
-		const name = decodeURIComponent(backupFile[1]);
+		const name = decodeSegment(backupFile[1]);
 		const file = backupFilePath(name);
 		if (!file || !(await Bun.file(file).exists())) return json({ error: "Backup not found" }, 404);
 		return new Response(Bun.file(file), {
@@ -279,7 +302,7 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 			return json({ error: "Expected JSON" }, 415);
 		}
 		return saveMealAsRecipe(
-			decodeURIComponent(mealMatch[1]),
+			decodeSegment(mealMatch[1]),
 			Number(mealMatch[2]),
 			await req.json().catch(() => ({})),
 		);
@@ -287,7 +310,7 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 
 	const planMatch = /^\/api\/plans\/([^/]+)(\/checked|\/rating)?$/.exec(path);
 	if (planMatch?.[1]) {
-		const planId = decodeURIComponent(planMatch[1]);
+		const planId = decodeSegment(planMatch[1]);
 		const sub = planMatch[2];
 		if (!sub && req.method === "GET") {
 			const plan = await findPlan(planId);
@@ -318,14 +341,16 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 
 	const match = /^\/api\/recipes\/([^/]+)(\/rating)?$/.exec(path);
 	if (!match?.[1]) return json({ error: "Not found" }, 404);
-	const id = decodeURIComponent(match[1]);
+	const id = decodeSegment(match[1]);
 
 	if (!match[2] && req.method === "GET") {
 		const recipe = await findRecipe(id);
 		if (!recipe) return json({ error: "Recipe not found" }, 404);
 		const servings = Number(url.searchParams.get("servings"));
 		return json(
-			Number.isInteger(servings) && servings > 0 ? scaleRecipe(recipe, servings) : recipe,
+			Number.isInteger(servings) && servings > 0 && servings <= MAX_SCALED_SERVINGS
+				? scaleRecipe(recipe, servings)
+				: recipe,
 		);
 	}
 
@@ -348,6 +373,24 @@ export async function handleUiRequest(req: Request): Promise<Response> {
 	return json({ error: "Method not allowed" }, 405);
 }
 
+// Applied to every answer. Framing is refused only on the standalone address: Home Assistant shows
+// the ingress panel inside its own page, but nothing should frame the standalone app, where another
+// site could otherwise overlay it while Tailscale vouches for the visitor.
+export function withSecurityHeaders(response: Response, denyFraming: boolean): Response {
+	const headers = new Headers(response.headers);
+	headers.set("X-Content-Type-Options", "nosniff");
+	headers.set("Referrer-Policy", "no-referrer");
+	if (denyFraming) {
+		headers.set("X-Frame-Options", "DENY");
+		headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+	}
+	return new Response(response.body, {
+		status: response.status,
+		statusText: response.statusText,
+		headers,
+	});
+}
+
 // Home Assistant's ingress proxy always connects from this address; everything else is refused
 const INGRESS_ADDRESS = "172.30.32.2";
 
@@ -359,12 +402,48 @@ export function isAllowedTailnetUser(headers: Headers, allowedLogins: string[]):
 	return !!login && allowedLogins.includes(login);
 }
 
-export function startStandaloneUi(port: number, allowedLogins: string[]): void {
+// The two front doors share the routes; each checks its own kind of identity first
+export function createStandaloneFetch(
+	allowedLogins: string[],
+): (req: Request) => Promise<Response> {
 	const allowed = allowedLogins.map((l) => l.trim().toLowerCase()).filter(Boolean);
-	if (allowed.length === 0) {
+	return async (req) => {
+		if (!isAllowedTailnetUser(req.headers, allowed)) {
+			logger.warn("Refused standalone recipe app request without an allowed Tailscale login");
+			return withSecurityHeaders(new Response("Forbidden", { status: 403 }), true);
+		}
+		try {
+			return withSecurityHeaders(await handleUiRequest(req), true);
+		} catch (error) {
+			logger.error({ err: error }, "Recipe app request failed");
+			return withSecurityHeaders(json({ error: "Server error" }, 500), true);
+		}
+	};
+}
+
+export function createIngressFetch(
+	allowAny = process.env.RUOKA_UI_ALLOW_ANY === "1",
+): (req: Request, peer: string | null | undefined) => Promise<Response> {
+	return async (req, peer) => {
+		if (peer !== INGRESS_ADDRESS && !allowAny) {
+			logger.warn({ peer }, "Refused recipe UI request outside ingress");
+			return withSecurityHeaders(new Response("Forbidden", { status: 403 }), false);
+		}
+		try {
+			return withSecurityHeaders(await handleUiRequest(req), false);
+		} catch (error) {
+			logger.error({ err: error }, "Recipe UI request failed");
+			return withSecurityHeaders(json({ error: "Server error" }, 500), false);
+		}
+	};
+}
+
+export function startStandaloneUi(port: number, allowedLogins: string[]): void {
+	if (!allowedLogins.some((l) => l.trim())) {
 		logger.warn("Standalone recipe app disabled: no allowed Tailscale login");
 		return;
 	}
+	const fetch = createStandaloneFetch(allowedLogins);
 	Bun.serve({
 		maxRequestBodySize: MAX_BACKUP_BYTES,
 		// 127.0.0.2, not 127.0.0.1: Tailscale's userspace networking forwards direct tailnet
@@ -372,41 +451,19 @@ export function startStandaloneUi(port: number, allowedLogins: string[]): void {
 		hostname: process.env.RUOKA_UI_STANDALONE_HOST || "127.0.0.2",
 		port,
 		development: false,
-		async fetch(req) {
-			if (!isAllowedTailnetUser(req.headers, allowed)) {
-				logger.warn("Refused standalone recipe app request without an allowed Tailscale login");
-				return new Response("Forbidden", { status: 403 });
-			}
-			try {
-				return await handleUiRequest(req);
-			} catch (error) {
-				logger.error({ err: error }, "Recipe app request failed");
-				return json({ error: "Server error" }, 500);
-			}
-		},
+		fetch: (req) => fetch(req),
 	});
 	logger.info({ port }, "Standalone recipe app listening (Tailscale only)");
 }
 
 export function startUiServer(port: number): void {
+	const fetch = createIngressFetch();
 	Bun.serve({
 		maxRequestBodySize: MAX_BACKUP_BYTES,
 		hostname: "0.0.0.0",
 		port,
 		development: false,
-		async fetch(req, server) {
-			const peer = server.requestIP(req)?.address;
-			if (peer !== INGRESS_ADDRESS && process.env.RUOKA_UI_ALLOW_ANY !== "1") {
-				logger.warn({ peer }, "Refused recipe UI request outside ingress");
-				return new Response("Forbidden", { status: 403 });
-			}
-			try {
-				return await handleUiRequest(req);
-			} catch (error) {
-				logger.error({ err: error }, "Recipe UI request failed");
-				return json({ error: "Server error" }, 500);
-			}
-		},
+		fetch: (req, server) => fetch(req, server.requestIP(req)?.address),
 	});
 	logger.info({ port }, "Recipe UI listening (Home Assistant ingress)");
 }

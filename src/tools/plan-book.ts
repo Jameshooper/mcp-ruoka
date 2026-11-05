@@ -53,7 +53,7 @@ export function registerPlanBookTools(server: McpServer): void {
 			description:
 				"Get one saved meal plan by id or name, with its meals, shopping list, totals and balance report.",
 			annotations: { readOnlyHint: true },
-			inputSchema: z.object({ plan: z.string().min(1).describe("Plan id or name") }),
+			inputSchema: z.object({ plan: z.string().min(1).max(120).describe("Plan id or name") }),
 		},
 		async ({ plan }) => {
 			const found = await findPlan(plan);
@@ -68,7 +68,7 @@ export function registerPlanBookTools(server: McpServer): void {
 				"Rate a saved meal plan 1-5 stars, with an optional short review, when the user says how the week went. The same rating can be set in the Meal plans panel.",
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
 			inputSchema: z.object({
-				plan: z.string().min(1).describe("Plan id or name"),
+				plan: z.string().min(1).max(120).describe("Plan id or name"),
 				rating: z.number().int().min(1).max(5),
 				review: z.string().max(2000).optional().describe("What worked or what to change"),
 			}),
@@ -86,7 +86,7 @@ export function registerPlanBookTools(server: McpServer): void {
 		{
 			description: "Delete a saved meal plan by id or name. Only do this when the user asks.",
 			annotations: { readOnlyHint: false, destructiveHint: true },
-			inputSchema: z.object({ plan: z.string().min(1).describe("Plan id or name") }),
+			inputSchema: z.object({ plan: z.string().min(1).max(120).describe("Plan id or name") }),
 		},
 		async ({ plan }) => {
 			const removed = await deletePlan(plan);

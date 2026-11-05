@@ -85,3 +85,14 @@ test("memoizedLookup shares in-flight work and keeps only worthwhile results", a
 	await lookup("z", empty);
 	expect(zeros).toBe(2);
 });
+
+// API-11
+test("the lookup cache stays bounded and drops expired answers first", async () => {
+	const lookup = memoizedLookup<number>(1_000, () => true, 3);
+	let produced = 0;
+	const get = (key: string) => lookup(key, async () => ++produced);
+	for (const key of ["a", "b", "c", "d"]) await get(key);
+	// "a" was the oldest and was dropped to stay at three entries; "d" is still cached
+	expect(await get("d")).toBe(4);
+	expect(await get("a")).toBe(5);
+});
