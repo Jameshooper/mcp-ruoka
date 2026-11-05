@@ -56,9 +56,13 @@ if [ -n "$TS_AUTH_KEY" ]; then
   # Failures here must not stop the MCP server itself, so they only warn.
   tailscale serve --bg --https=8443 "http://$LISTEN_HOST:3003" || echo "Could not publish the standalone recipe app on port 8443" >&2
   tailscale serve status || true
-  if [ -z "$UI_ALLOWED_LOGINS" ]; then
+  # Right after "tailscale up" the node's owner can still be missing from the status (it arrives
+  # with the first network map), which left the app with nobody allowed; wait for it briefly
+  for _ in $(seq 1 20); do
+    [ -n "$UI_ALLOWED_LOGINS" ] && break
     UI_ALLOWED_LOGINS="$(tailscale status --json | jq -r '.User[(.Self.UserID | tostring)].LoginName // empty' || true)"
-  fi
+    [ -n "$UI_ALLOWED_LOGINS" ] || sleep 1
+  done
   TS_DNS_NAME="$(tailscale status --json | jq -r '.Self.DNSName | rtrimstr(".")' || true)"
   echo "Standalone recipe app: https://$TS_DNS_NAME:8443 (allowed: ${UI_ALLOWED_LOGINS:-nobody})"
 
