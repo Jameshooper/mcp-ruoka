@@ -30,6 +30,8 @@ const MealSchema = z.object({
 	name: z.string(),
 	// What the dish is called, as opposed to the slot it fills ("Chicken curry" vs "Wed dinner")
 	dish: z.string().optional(),
+	// Calendar day (YYYY-MM-DD) the meal is for, so the week's menu can be shown in Home Assistant
+	date: z.string().optional(),
 	prepMinutes: z.number().optional(),
 	cookMinutes: z.number().optional(),
 	// The meal's ingredients totalled for its servings, so it can be saved as a recipe later
@@ -107,12 +109,22 @@ async function readPlans(): Promise<MealPlan[]> {
 	return BookSchema.parse(JSON.parse(text)).plans;
 }
 
+const changeListeners: Array<() => void> = [];
+
+// Lets the Home Assistant dinner menu follow saves, deletes and imports without this module
+// knowing about Home Assistant
+export function onPlansChanged(listener: () => void): void {
+	changeListeners.push(listener);
+}
+
 async function writePlans(plans: MealPlan[]): Promise<void> {
 	const file = planFile();
 	await mkdir(join(file, ".."), { recursive: true });
 	const temp = `${file}.tmp`;
 	await writeFile(temp, JSON.stringify({ plans }, null, 2));
 	await rename(temp, file);
+	// Deferred so a listener that reads the plans waits behind the queue instead of running inside it
+	for (const listener of changeListeners) setTimeout(listener, 0);
 }
 
 let queue: Promise<unknown> = Promise.resolve();
