@@ -42,6 +42,13 @@ const MealSchema = z.object({
 		.min(1)
 		.optional()
 		.describe("What the dish is called, e.g. 'Chicken curry' (the name is only the slot)"),
+	date: z
+		.string()
+		.regex(/^\d{4}-\d{2}-\d{2}$/)
+		.optional()
+		.describe(
+			"Calendar day the meal is for (YYYY-MM-DD). Set it whenever the plan is for known days: it puts the meal on the dinner menu shown in Home Assistant",
+		),
 	recipe: z
 		.string()
 		.max(120)
@@ -93,6 +100,7 @@ function round2(n: number): number {
 
 type ResolvedMeal = Omit<PlannedMeal, "name"> & {
 	ingredients: Ingredient[];
+	date?: string;
 	steps: string[];
 	dish?: string;
 	prepMinutes?: number;
@@ -104,7 +112,7 @@ type ResolvedMeal = Omit<PlannedMeal, "name"> & {
 
 // Explicit fields on the meal override what the saved recipe says
 async function resolveMeal(meal: Meal): Promise<ResolvedMeal | string> {
-	const base = { servings: meal.servings };
+	const base = { servings: meal.servings, ...(meal.date && { date: meal.date }) };
 	if (meal.recipe) {
 		const recipe = await findRecipe(meal.recipe);
 		if (!recipe) return `No saved recipe matches "${meal.recipe}"`;

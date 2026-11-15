@@ -30,6 +30,10 @@ The Funnel makes `/mcp` reachable from the internet, so the server defends itsel
 
 Set `notify_service` in the app configuration to a Home Assistant notify service, for example `notify.mobile_app_your_phone` (Developer tools → Actions lists yours). The app then sends a notification when the failed-sign-in limit trips (at most one per 30 minutes) or when the IP allowlist refuses a request (at most one per 6 hours, since scanners hit public addresses all day); the next alert says how many were held back in between. It talks to Home Assistant through the Supervisor (`homeassistant_api: true`), so nothing else needs configuring. **Send a test notification** on the Backup & restore screen checks the setup. Leave the option empty to turn alerts off.
 
+### Dinner menu in Home Assistant
+
+Inside the Home Assistant app the server keeps a `sensor.ruoka_dinner_menu` entity up to date: its state is tonight's dinner (or "Nothing planned"), `days` lists today and the next six days (`date`, `label`, `dish`, `recipe`, `plan`), and `day_1` … `day_7` hold the same days as plain text (`Mon 16 Nov~Salmon soup`) for e-ink displays and other simple clients. A meal is placed on a day by its `date` (YYYY-MM-DD, which `plan_meals` accepts per meal and the family plan prompt asks for) or, for plans saved without one, by a date in its slot name such as "Wed 21 Oct dinner"; meals named only by weekday are left off. When two saved plans cover the same evening, the one saved last wins; lunches and breakfasts are skipped. The sensor is refreshed whenever plans change and every 15 minutes, which also brings it back after a Home Assistant restart (states set through the API are not stored).
+
 ### Backup and restore
 
 The app also saves a zip of everything once a day to `backups/ruoka-daily-YYYY-MM-DD.zip` in the data folder (the last 7 are kept, nothing is written while there are no recipes or plans). They are listed under **Saved backups** on the same screen, each with a download button. These copies live on the same disk as the data, so download one now and then to keep it elsewhere.

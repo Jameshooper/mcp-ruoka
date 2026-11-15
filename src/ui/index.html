@@ -837,6 +837,10 @@ function cookLink(meal, known) {
 const FAMILY_FIRST_PORTIONS = 5;
 const FAMILY_OTHER_PORTIONS = 8;
 
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function familyWeek(today = new Date()) {
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   start.setDate(start.getDate() + ((3 - start.getDay() + 7) % 7));
@@ -849,7 +853,7 @@ function familyWeek(today = new Date()) {
   const first = days[0].date;
   const last = days[8].date;
   return {
-    days: days.map((d) => ({ label: fmt(d.date, { weekday: "short", ...short }), portions: d.portions })),
+    days: days.map((d) => ({ label: fmt(d.date, { weekday: "short", ...short }), iso: isoDate(d.date), portions: d.portions })),
     total: days.reduce((sum, d) => sum + d.portions, 0),
     range: `${fmt(first, { weekday: "short", ...short })} to ${fmt(last, { weekday: "short", ...short })}`,
     planName: `Family plan ${fmt(first, short)} - ${fmt(last, short)}`,
@@ -859,7 +863,7 @@ function familyWeek(today = new Date()) {
 function familyPlanPrompt() {
   const week = familyWeek();
   const store = config.defaultStore || (plans[0] && { chain: plans[0].store.chain, id: plans[0].store.storeId, name: plans[0].store.name });
-  const dayList = week.days.map((d) => `${d.label} (${d.portions})`).join(", ");
+  const dayList = week.days.map((d) => `${d.label} (${d.portions}, date ${d.iso})`).join(", ");
   return withNote(
     `Create our family meal plan for ${week.range}.
 
@@ -871,7 +875,7 @@ Rules:
 - Start with my saved Ruoka recipes (list_recipes, prefer the ones I rated well). Save any new recipe with save_recipe, including its method.
 - Balance: at least one white meat, one red meat (at most 2 red meat dinners) and one fish dinner. Every dinner includes vegetables or a salad. Tag each meal's protein and vegetables.
 - Use food efficiently: pool ingredients so packs get used up, and plan leftovers into later meals.
-- Price it with plan_meals at ${storeText(store)} (${storeParams(store)}). Give every meal a dish name as well as its slot (for example "Wed dinner"). Adjust the menu and call again until the balance, waste, budget and missing items are all fine (substitute anything not found). Then save the plan once with saveAs "${week.planName}".
+- Price it with plan_meals at ${storeText(store)} (${storeParams(store)}). Give every meal a dish name as well as its slot (for example "Wed dinner"), and its date (YYYY-MM-DD, as listed above) so it shows on the dinner menu in Home Assistant. Adjust the menu and call again until the balance, waste, budget and missing items are all fine (substitute anything not found). Then save the plan once with saveAs "${week.planName}".
 - If lookups fail with HTTP 403, wait a few minutes instead of retrying at once, and never save a plan built from failed lookups.
 - Show the menu by day with portions, kcal and protein per portion; the shopping list by aisle (To buy, then Pantry check) with totals; the cost per portion; the balance and budget results; and what is left over.`,
   );

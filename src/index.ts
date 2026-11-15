@@ -6,6 +6,7 @@ import { startDailyBackups } from "./backup.ts";
 import { warmup as warmupAlko } from "./browser/alko.ts";
 import { warmup as warmupSKaupat } from "./browser/s-kaupat.ts";
 import { getPage } from "./browser/session.ts";
+import { startDinnerMenuSync } from "./dinner-menu.ts";
 import { authConfigError, createMcpHttpHandler, MAX_REQUEST_BODY_BYTES } from "./http-server.ts";
 import { logger } from "./logger.ts";
 import { parseCidrs } from "./security.ts";
@@ -68,6 +69,7 @@ function startHttpServer() {
 	if (uiPort > 0) {
 		startUiServer(uiPort);
 		startDailyBackups((err) => logger.warn({ err }, "Daily backup failed"));
+		startDinnerMenuSync();
 	}
 	const standalonePort = Number(process.env.RUOKA_UI_STANDALONE_PORT);
 	if (standalonePort > 0) {
