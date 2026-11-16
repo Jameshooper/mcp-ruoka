@@ -88,9 +88,14 @@ const RatingBodySchema = z.object({
 	review: z.string().max(2000).optional(),
 });
 
-// The Shortcut shows `message`, so a failure carries its reason there too
+// The iPhone Shortcut reads `message` only from a successful answer (it shows an error answer as
+// raw JSON), so share-sheet answers are always HTTP 200 with `ok` saying whether it worked
+function shareReply(ok: boolean, message: string, extra: Record<string, unknown> = {}): Response {
+	return json({ ok, message, ...(ok ? {} : { error: message }), ...extra });
+}
+
 function shareError(error: WebRecipeError): Response {
-	return json({ error: error.message, message: error.message }, error.status);
+	return shareReply(false, error.message, { status: error.status });
 }
 
 function json(body: unknown, status = 200): Response {
@@ -346,6 +351,7 @@ async function routeUiRequest(req: Request): Promise<Response> {
 				const post = await fetchInstagramPost(body.data.url, webFetch);
 				requestOpenInstagram(post);
 				return json({
+					ok: true,
 					sent: true,
 					name: post.title,
 					site: "instagram.com",
@@ -356,6 +362,7 @@ async function routeUiRequest(req: Request): Promise<Response> {
 			const web = await fetchWebRecipe(body.data.url, webFetch);
 			requestOpenWebRecipe(web);
 			return json({
+				ok: true,
 				sent: true,
 				name: web.name,
 				site: web.site,
@@ -383,21 +390,24 @@ async function routeUiRequest(req: Request): Promise<Response> {
 				const message = existed
 					? `"${draft.title}" is already in Ruoka's inbox`
 					: `Saved "${draft.title}" to Ruoka's inbox. Ask Claude to turn it into a recipe`;
-				return json(
-					{ saved: !existed, draft: draft.id, name: draft.title, message, exists: existed },
-					existed ? 409 : 200,
-				);
+				return shareReply(!existed, message, {
+					saved: !existed,
+					draft: draft.id,
+					name: draft.title,
+					exists: existed,
+				});
 			}
 			const input = webRecipeToInput(await fetchWebRecipe(body.data.url, webFetch));
 			// A recipe of the same name may have been edited or rated here; never overwrite it
 			const existing = await findRecipe(input.name);
 			if (existing) {
 				const message = `"${existing.name}" is already in Ruoka`;
-				return json({ error: message, message, exists: true, id: existing.id }, 409);
+				return shareReply(false, message, { exists: true, id: existing.id });
 			}
 			const { recipe } = await saveRecipe(input);
 			logger.info({ recipe: recipe.id, tag: IMPORT_TAG }, "Recipe imported from the web");
 			return json({
+				ok: true,
 				saved: true,
 				id: recipe.id,
 				name: recipe.name,

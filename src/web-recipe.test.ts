@@ -176,7 +176,11 @@ test("share sheet to Kindle: the page is read, sent, and served to the Kindle as
 			}),
 		);
 	})();
-	expect(noRecipe.status).toBe(422);
+	expect(noRecipe.status).toBe(200);
+	expect(await noRecipe.json()).toMatchObject({
+		ok: false,
+		message: "No recipe found on that page",
+	});
 	setWebFetchForTests(fetch);
 });
 
