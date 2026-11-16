@@ -7,6 +7,7 @@ import { warmup as warmupAlko } from "./browser/alko.ts";
 import { warmup as warmupSKaupat } from "./browser/s-kaupat.ts";
 import { getPage } from "./browser/session.ts";
 import { startDinnerMenuSync } from "./dinner-menu.ts";
+import { startHomeAssistantCommands } from "./ha-commands.ts";
 import { authConfigError, createMcpHttpHandler, MAX_REQUEST_BODY_BYTES } from "./http-server.ts";
 import { startKindleServer } from "./kindle.ts";
 import { logger } from "./logger.ts";
@@ -71,6 +72,7 @@ function startHttpServer() {
 		startUiServer(uiPort);
 		startDailyBackups((err) => logger.warn({ err }, "Daily backup failed"));
 		startDinnerMenuSync();
+		startHomeAssistantCommands();
 	}
 	const kindlePort = Number(process.env.RUOKA_KINDLE_PORT);
 	if (kindlePort > 0) startKindleServer(kindlePort);

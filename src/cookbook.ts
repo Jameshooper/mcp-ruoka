@@ -586,6 +586,23 @@ export function buildRecipeBook(recipe: Recipe): Uint8Array {
 	});
 }
 
+// A planned dinner that was never saved as a recipe, sent from the dinner-menu display: the plan
+// keeps its ingredients and method, so it reads like any other recipe on the Kindle
+export function buildMealBook(
+	meal: MealPlan["meals"][number],
+	dish: string,
+	now = new Date(),
+): Uint8Array {
+	const r = fromMeal(meal, dish);
+	return packageEpub({
+		title: dish,
+		pages: [{ file: "recipe.xhtml", title: dish, body: page(dish, recipeBody(r, undefined, "")) }],
+		nav: [{ label: dish, file: "recipe.xhtml" }],
+		modified: now,
+		identifier: `urn:ruoka:${r.id}:${meal.servings}`,
+	});
+}
+
 // A recipe found on the web and sent from the phone's share sheet. Its ingredients are the site's
 // own lines ("2 tbsp olive oil"), so they are listed as written instead of in the quantity table.
 export function buildWebRecipeBook(web: WebRecipe, now = new Date()): Uint8Array {

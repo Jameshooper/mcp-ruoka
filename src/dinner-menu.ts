@@ -96,32 +96,35 @@ export function mealDate(
 	return null;
 }
 
-function dayLabel(d: Date): string {
+export function dayLabel(d: Date): string {
 	return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]?.replace(/^./, (c) => c.toUpperCase())}`;
 }
 
-// Today and the next six days. When two saved plans cover the same evening, the one saved last wins,
-// since re-planning a week is how a menu gets changed.
-export function buildMenu(plans: MealPlan[], today: Date, days = DAYS): MenuDay[] {
-	const byDate = new Map<
-		string,
-		{ dish: string; recipe: string | null; plan: string; updatedAt: string }
-	>();
+export interface PlannedDinner {
+	meal: MealPlan["meals"][number];
+	plan: MealPlan;
+}
+
+// Each evening's dinner across the saved plans. When two plans cover the same evening, the one
+// saved last wins, since re-planning a week is how a menu gets changed.
+export function dinnersByDate(plans: MealPlan[]): Map<string, PlannedDinner> {
+	const byDate = new Map<string, PlannedDinner>();
 	for (const plan of plans) {
 		for (const meal of plan.meals) {
 			if (OTHER_MEALS_RE.test(meal.name)) continue;
 			const date = mealDate(meal, plan.createdAt);
 			if (!date) continue;
 			const current = byDate.get(date);
-			if (current && current.updatedAt > plan.updatedAt) continue;
-			byDate.set(date, {
-				dish: meal.dish ?? meal.name,
-				recipe: meal.recipe ?? null,
-				plan: plan.name,
-				updatedAt: plan.updatedAt,
-			});
+			if (current && current.plan.updatedAt > plan.updatedAt) continue;
+			byDate.set(date, { meal, plan });
 		}
 	}
+	return byDate;
+}
+
+// Today and the next six days
+export function buildMenu(plans: MealPlan[], today: Date, days = DAYS): MenuDay[] {
+	const byDate = dinnersByDate(plans);
 	return Array.from({ length: days }, (_, i) => {
 		const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
 		const date = localIsoDate(d);
@@ -129,9 +132,9 @@ export function buildMenu(plans: MealPlan[], today: Date, days = DAYS): MenuDay[
 		return {
 			date,
 			label: dayLabel(d),
-			dish: found?.dish ?? null,
-			recipe: found?.recipe ?? null,
-			plan: found?.plan ?? null,
+			dish: found ? (found.meal.dish ?? found.meal.name) : null,
+			recipe: found?.meal.recipe ?? null,
+			plan: found?.plan.name ?? null,
 		};
 	});
 }
