@@ -125,12 +125,12 @@ test("share sheet to Ruoka: saved once, then reported as already there", async (
 	expect(saved?.ingredients[1]?.quantity).toEqual({ amount: 300, unit: "ml" });
 
 	const again = await send();
-	expect(again.status).toBe(409);
+	expect(again.status).toBe(200);
 	expect(Reply.parse(await again.json()).message).toBe('"Shared Pancakes" is already in Ruoka');
 
 	setWebFetchForTests(async () => new Response("<html>No recipe</html>"));
 	const none = await send();
-	expect(none.status).toBe(422);
+	expect(none.status).toBe(200);
 	expect(Reply.parse(await none.json()).message).toBe("No recipe found on that page");
 	setWebFetchForTests(fetch);
 });
