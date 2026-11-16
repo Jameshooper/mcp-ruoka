@@ -8,6 +8,7 @@ import {
 	listBackupFiles,
 	previewBackup,
 } from "./backup.ts";
+import { kindleStatus, requestOpenOnKindle } from "./kindle.ts";
 import { logger } from "./logger.ts";
 import { sendNotification } from "./notify.ts";
 import {
@@ -59,6 +60,11 @@ const SaveMealBodySchema = z.object({
 });
 
 const CheckedBodySchema = z.object({ checked: z.array(z.string()).max(200) });
+
+const KindleOpenBodySchema = z.object({
+	recipe: z.string().min(1).max(200),
+	servings: z.number().int().positive().max(100).optional(),
+});
 
 const RatingBodySchema = z.object({
 	rating: z.number().int().min(1).max(5).nullable(),
@@ -289,6 +295,21 @@ async function routeUiRequest(req: Request): Promise<Response> {
 
 	if (path === "/api/stores" && req.method === "GET") {
 		return json({ names: await getStoreNames() });
+	}
+
+	if (path === "/api/kindle/status" && req.method === "GET") {
+		return json(kindleStatus());
+	}
+
+	if (path === "/api/kindle/open" && req.method === "POST") {
+		// A JSON content type forces a CORS preflight, so other sites cannot send this blindly
+		if (!req.headers.get("content-type")?.includes("application/json")) {
+			return json({ error: "Expected JSON" }, 415);
+		}
+		const body = KindleOpenBodySchema.safeParse(await req.json().catch(() => null));
+		if (!body.success) return json({ error: "Invalid request" }, 400);
+		const request = await requestOpenOnKindle(body.data.recipe, body.data.servings);
+		return request ? json(kindleStatus()) : json({ error: "Recipe not found" }, 404);
 	}
 
 	if (path === "/api/plans" && req.method === "GET") {

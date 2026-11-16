@@ -31,6 +31,8 @@ function dosDateTime(date: Date): { time: number; day: number } {
 export interface ZipEntry {
 	name: string;
 	data: Uint8Array;
+	// EPUB readers find the format by reading an uncompressed `mimetype` entry at a fixed offset
+	stored?: boolean;
 }
 
 export function zipFiles(files: ZipEntry[], now = new Date()): Uint8Array {
@@ -41,14 +43,15 @@ export function zipFiles(files: ZipEntry[], now = new Date()): Uint8Array {
 
 	for (const file of files) {
 		const name = Buffer.from(file.name, "utf8");
-		const compressed = deflateRawSync(file.data);
+		const method = file.stored ? 0 : 8;
+		const compressed = file.stored ? Buffer.from(file.data) : deflateRawSync(file.data);
 		const crc = crc32(file.data);
 
 		const local = Buffer.alloc(30 + name.length);
 		local.writeUInt32LE(0x04034b50, 0);
 		local.writeUInt16LE(20, 4);
 		local.writeUInt16LE(0x0800, 6);
-		local.writeUInt16LE(8, 8);
+		local.writeUInt16LE(method, 8);
 		local.writeUInt16LE(time, 10);
 		local.writeUInt16LE(day, 12);
 		local.writeUInt32LE(crc, 14);
@@ -62,7 +65,7 @@ export function zipFiles(files: ZipEntry[], now = new Date()): Uint8Array {
 		central.writeUInt16LE(20, 4);
 		central.writeUInt16LE(20, 6);
 		central.writeUInt16LE(0x0800, 8);
-		central.writeUInt16LE(8, 10);
+		central.writeUInt16LE(method, 10);
 		central.writeUInt16LE(time, 12);
 		central.writeUInt16LE(day, 14);
 		central.writeUInt32LE(crc, 16);

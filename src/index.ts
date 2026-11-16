@@ -8,6 +8,7 @@ import { warmup as warmupSKaupat } from "./browser/s-kaupat.ts";
 import { getPage } from "./browser/session.ts";
 import { startDinnerMenuSync } from "./dinner-menu.ts";
 import { authConfigError, createMcpHttpHandler, MAX_REQUEST_BODY_BYTES } from "./http-server.ts";
+import { startKindleServer } from "./kindle.ts";
 import { logger } from "./logger.ts";
 import { parseCidrs } from "./security.ts";
 import { registerMealPlanTool } from "./tools/meal-plan.ts";
@@ -71,6 +72,8 @@ function startHttpServer() {
 		startDailyBackups((err) => logger.warn({ err }, "Daily backup failed"));
 		startDinnerMenuSync();
 	}
+	const kindlePort = Number(process.env.RUOKA_KINDLE_PORT);
+	if (kindlePort > 0) startKindleServer(kindlePort);
 	const standalonePort = Number(process.env.RUOKA_UI_STANDALONE_PORT);
 	if (standalonePort > 0) {
 		startStandaloneUi(standalonePort, (process.env.RUOKA_UI_ALLOWED_LOGINS ?? "").split(","));
