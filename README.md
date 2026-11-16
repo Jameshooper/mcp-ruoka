@@ -46,6 +46,8 @@ Recipes found on the web can be sent too: `POST api/kindle/open-url` with `{"url
 
 The same page can be kept in the recipe book instead: `POST api/recipes/import-url` with `{"url": "https://..."}` saves it as a recipe tagged `from-web`, with the source in its notes. Ingredient lines are read into amounts in the book's units (spoons, cups and dl become ml, oz and lb become g), and each ingredient's name as written becomes its shop search term, which suits Finnish sites. Other sites' terms are placeholders until Claude tidies them (for example "tidy my from-web recipes"). A recipe whose name is already in the book is never overwritten (HTTP 409). A second Shortcut with this address gives the share sheet a *Save to Ruoka* entry.
 
+Instagram posts (`/p/`, `/reel/`) work with both addresses. They carry no recipe data, so the caption is read from the post's public embed page (no login; private posts and posts with embedding turned off are refused). *Send to Kindle* shows the caption as a one-page book, with bullet and numbered lines as lists. *Save to Ruoka* keeps it in an inbox (`drafts.json` in the data directory, not part of backups) for Claude: the `list_recipe_drafts` tool lists the inbox, Claude saves each draft as a real recipe with `save_recipe` and `fromDraft`, and `delete_recipe_draft` drops a caption with no recipe in it.
+
 To install the plugin on a jailbroken Kindle (or any KOReader device), copy `kindle/ruoka.koplugin` to `koreader/plugins/`, put the server address in `koreader/plugins/ruoka.koplugin/server.txt` (for example `http://192.168.1.10:3004`, Home Assistant's LAN address) or set it later in the plugin's menu, and restart KOReader.
 
 ### Backup and restore

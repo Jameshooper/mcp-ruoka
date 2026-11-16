@@ -8,7 +8,14 @@ import {
 	listBackupFiles,
 	previewBackup,
 } from "./backup.ts";
-import { kindleStatus, requestOpenOnKindle, requestOpenWebRecipe } from "./kindle.ts";
+import { addInstagramDraft } from "./draft-book.ts";
+import { fetchInstagramPost, isInstagramLink } from "./instagram.ts";
+import {
+	kindleStatus,
+	requestOpenInstagram,
+	requestOpenOnKindle,
+	requestOpenWebRecipe,
+} from "./kindle.ts";
 import { logger } from "./logger.ts";
 import { sendNotification } from "./notify.ts";
 import {
@@ -335,6 +342,17 @@ async function routeUiRequest(req: Request): Promise<Response> {
 		const body = KindleUrlBodySchema.safeParse(await req.json().catch(() => null));
 		if (!body.success) return json({ error: "Send the page's address as url" }, 400);
 		try {
+			if (isInstagramLink(body.data.url)) {
+				const post = await fetchInstagramPost(body.data.url, webFetch);
+				requestOpenInstagram(post);
+				return json({
+					sent: true,
+					name: post.title,
+					site: "instagram.com",
+					message: `Sent "${post.title}" to the Kindle`,
+					...kindleStatus(),
+				});
+			}
 			const web = await fetchWebRecipe(body.data.url, webFetch);
 			requestOpenWebRecipe(web);
 			return json({
@@ -358,6 +376,18 @@ async function routeUiRequest(req: Request): Promise<Response> {
 		const body = KindleUrlBodySchema.safeParse(await req.json().catch(() => null));
 		if (!body.success) return json({ error: "Send the page's address as url" }, 400);
 		try {
+			// A caption has no recipe data, so it waits in the inbox for Claude to turn into one
+			if (isInstagramLink(body.data.url)) {
+				const post = await fetchInstagramPost(body.data.url, webFetch);
+				const { draft, existed } = await addInstagramDraft(post);
+				const message = existed
+					? `"${draft.title}" is already in Ruoka's inbox`
+					: `Saved "${draft.title}" to Ruoka's inbox. Ask Claude to turn it into a recipe`;
+				return json(
+					{ saved: !existed, draft: draft.id, name: draft.title, message, exists: existed },
+					existed ? 409 : 200,
+				);
+			}
 			const input = webRecipeToInput(await fetchWebRecipe(body.data.url, webFetch));
 			// A recipe of the same name may have been edited or rated here; never overwrite it
 			const existing = await findRecipe(input.name);
