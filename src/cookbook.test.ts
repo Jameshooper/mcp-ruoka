@@ -114,6 +114,25 @@ test("builds a valid EPUB: mimetype first and uncompressed, every link resolves"
 	expect(contents).toContain("Eggs Benedict");
 });
 
+// KOReader uses the cover as the Kindle's sleep screen, found through the package metadata
+test("the cookbook has a cover image; a single recipe book does not", () => {
+	const files = unzipFiles(buildCookbook([recipe("chili", "Bean chili")], [], today));
+	const opf = DECODER.decode(files.get("OEBPS/content.opf"));
+	expect(opf).toContain(
+		'<item id="cover-image" href="cover.png" media-type="image/png" properties="cover-image"/>',
+	);
+	expect(opf).toContain('<meta name="cover" content="cover-image"/>');
+	const png = files.get("OEBPS/cover.png") ?? new Uint8Array();
+	expect([...png.subarray(1, 4)]).toEqual([0x50, 0x4e, 0x47]);
+	// The Paperwhite's screen: width and height are big-endian at bytes 16 and 20 of the PNG header
+	const header = new DataView(png.buffer, png.byteOffset);
+	expect([header.getUint32(16), header.getUint32(20)]).toEqual([1072, 1448]);
+
+	const single = unzipFiles(buildRecipeBook(recipe("chili", "Bean chili")));
+	expect(single.has("OEBPS/cover.png")).toBe(false);
+	expect(DECODER.decode(single.get("OEBPS/content.opf"))).not.toContain("cover-image");
+});
+
 test("a recipe page splits what to buy from cupboard staples and escapes text", () => {
 	const files = read(
 		buildCookbook([recipe("x", "Fish & <chips>", { notes: "Use the Meira oregano" })], [], today),
