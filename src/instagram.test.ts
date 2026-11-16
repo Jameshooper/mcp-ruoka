@@ -108,15 +108,64 @@ test("shared from Instagram: the caption goes to the Kindle, or into the inbox f
 	expect(drafts[0]?.caption).toContain("-5 large potatoes\n-3 tbsps corn starch");
 
 	const again = await handleUiRequest(share("/api/recipes/import-url"));
-	expect(again.status).toBe(409);
+	expect(again.status).toBe(200);
 	expect(Reply.parse(await again.json()).message).toContain("already in Ruoka's inbox");
 
 	setWebFetchForTests(async () => new Response("<html>Private</html>"));
 	await deleteDraft("instagram-DeP9EKKSqsa");
 	const hidden = await handleUiRequest(share("/api/recipes/import-url"));
-	expect(hidden.status).toBe(422);
+	expect(hidden.status).toBe(200);
 	expect(Reply.parse(await hidden.json()).message).toBe(
 		"Instagram did not share that post's caption",
 	);
 	setWebFetchForTests(fetch);
+});
+
+// What the post page carries when the embed page leaves the caption out
+const POST_PAGE = `<html><head><meta property="og:title" content="Cook on Instagram: &quot;Wraps &#x1f32f;&quot;" /><meta property="og:description" content="27K likes, 117 comments - jalal.cook on November 1, 2026: &quot;Korean BBQ Chicken Wraps &#x1f357;
+Macros: 520 kcal - 45g protein
+
+Ingredients:
+- 900 g chicken thighs
+- 2 tbsp gochujang
+
+1. Air fry the chicken.
+
+#highprotein #mealprep&quot;. " /></head></html>`;
+
+test("when the embed page has no caption, the post page's preview tags are read instead", async () => {
+	const { parseMetaCaption, fetchInstagramPost } = await import("./instagram.ts");
+	expect(parseMetaCaption(POST_PAGE, "https://www.instagram.com/p/X2/")).toEqual({
+		source: "https://www.instagram.com/p/X2/",
+		author: "jalal.cook",
+		title: "Korean BBQ Chicken Wraps 🍗",
+		lines: [
+			"Korean BBQ Chicken Wraps 🍗",
+			"Macros: 520 kcal - 45g protein",
+			"",
+			"Ingredients:",
+			"- 900 g chicken thighs",
+			"- 2 tbsp gochujang",
+			"",
+			"1. Air fry the chicken.",
+		],
+	});
+	const titleOnly = POST_PAGE.replace(/<meta property="og:description"[^>]*>/, "");
+	expect(parseMetaCaption(titleOnly, "https://www.instagram.com/p/X2/")?.title).toBe("Wraps 🌯");
+
+	const asked: string[] = [];
+	const post = await fetchInstagramPost("https://www.instagram.com/reel/X2abc/", async (url) => {
+		asked.push(url.toString());
+		return new Response(url.pathname.includes("embed") ? "<html>video only</html>" : POST_PAGE);
+	});
+	expect(asked).toEqual([
+		"https://www.instagram.com/p/X2abc/embed/captioned/",
+		"https://www.instagram.com/p/X2abc/",
+	]);
+	expect(post.title).toBe("Korean BBQ Chicken Wraps 🍗");
+	await expect(
+		fetchInstagramPost("https://www.instagram.com/p/X3abc/", async () => {
+			throw new Error("offline");
+		}),
+	).rejects.toThrow("Could not reach Instagram");
 });
