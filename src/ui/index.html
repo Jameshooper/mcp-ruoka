@@ -827,6 +827,44 @@ function claudeActions(items) {
   );
 }
 
+// Asks the app to show the recipe on the Kindle. The KOReader plugin there checks every few seconds
+// while KOReader is open, so the status is polled until it reports the recipe opened.
+function kindleButton(recipe, servingsInput) {
+  const note = el("span", { class: "meta" });
+  let timer = null;
+  const poll = async (deadline) => {
+    try {
+      const status = await api("api/kindle/status");
+      if (status.request?.status === "opened") {
+        note.textContent = "Opened on the Kindle";
+        return;
+      }
+      note.textContent = status.seenRecently
+        ? "Sent, opening on the Kindle…"
+        : "Waiting for the Kindle: open KOReader with Wi-Fi on";
+    } catch (error) {
+      note.textContent = `Could not check: ${error.message}`;
+    }
+    if (Date.now() < deadline) timer = setTimeout(() => poll(deadline), 2000);
+    else note.textContent = "Not picked up yet. It opens when KOReader next starts (within 10 minutes).";
+  };
+  const button = el("button", { type: "button", onclick: async () => {
+    clearTimeout(timer);
+    try {
+      await api("api/kindle/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipe: recipe.id, servings: Number(servingsInput.value) || recipe.servings }),
+      });
+      note.textContent = "Sent to the Kindle…";
+      poll(Date.now() + 120_000);
+    } catch (error) {
+      note.textContent = `Could not send: ${error.message}`;
+    }
+  } }, "📖 Open on Kindle");
+  return el("div", { class: "row" }, button, note);
+}
+
 function cookLink(meal, known) {
   const link = el("a", { class: "btn", href: claudeLink(mealCookPrompt(meal, known)), target: "_blank", rel: "noopener" }, "🍳 Cook with Claude");
   return link;
@@ -1101,6 +1139,7 @@ function showDetail(id) {
         { label: "🍳 Cook with Claude", text: () => recipeCookPrompt(recipe, Number(servings.value) || recipe.servings), primary: true },
         { label: "🛒 Shop with Claude", text: () => recipeShopPrompt(recipe, Number(servings.value) || recipe.servings) },
       ]),
+      kindleButton(recipe, servings),
       macrosCard(recipe.nutrition),
       price ? price.node : null,
       el("div", { class: "row" }, el("span", { class: "meta" }, "Servings"), stepper(servings)),

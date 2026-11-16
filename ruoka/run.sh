@@ -74,6 +74,9 @@ export RUOKA_DATA_DIR=/data
 export RUOKA_DEFAULT_STORE_ID RUOKA_DEFAULT_STORE_NAME RUOKA_CLAUDE_NOTE
 # Served only through Home Assistant ingress, which the server checks by the proxy's address
 export RUOKA_UI_PORT=3002
+# The Kindle cookbook and "Open on Kindle" requests, for the KOReader plugin on the home network.
+# Reachable only when 3004/tcp is mapped to a host port under the app's Network tab.
+export RUOKA_KINDLE_PORT=3004
 if [ -n "$TS_AUTH_KEY" ]; then
   export MCP_HOST="$LISTEN_HOST"
   export RUOKA_UI_STANDALONE_HOST="$LISTEN_HOST"
