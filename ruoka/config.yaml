@@ -1,5 +1,5 @@
 name: Ruoka MCP
-version: "0.22.0"
+version: "0.23.0"
 slug: ruoka
 description: MCP server for Finnish grocery and alcohol search (K-Ruoka, S-Kaupat, Alko), exposed to Claude via Tailscale Funnel
 url: https://github.com/Jameshooper/mcp-ruoka
@@ -13,6 +13,11 @@ panel_icon: mdi:chef-hat
 panel_title: Recipes
 startup: application
 homeassistant_api: true
+# Read-only cookbook for the Kindle's KOReader plugin. Clear the host port to turn it off.
+ports:
+  3004/tcp: 3004
+ports_description:
+  3004/tcp: Kindle cookbook (home network, read-only)
 options:
   mcp_auth_token: ""
   oauth_client_id: ""

@@ -34,6 +34,16 @@ Set `notify_service` in the app configuration to a Home Assistant notify service
 
 Inside the Home Assistant app the server keeps a `sensor.ruoka_dinner_menu` entity up to date: its state is tonight's dinner (or "Nothing planned"), `days` lists today and the next six days (`date`, `label`, `dish`, `recipe`, `plan`), and `day_1` … `day_7` hold the same days as plain text (`Mon 16 Nov~Salmon soup`) for e-ink displays and other simple clients. A meal is placed on a day by its `date` (YYYY-MM-DD, which `plan_meals` accepts per meal and the family plan prompt asks for) or, for plans saved without one, by a date in its slot name such as "Wed 21 Oct dinner"; meals named only by weekday are left off. When two saved plans cover the same evening, the one saved last wins; lunches and breakfasts are skipped. The sensor is refreshed whenever plans change and every 15 minutes, which also brings it back after a Home Assistant restart (states set through the API are not stored).
 
+### Kindle cookbook and "Open on Kindle"
+
+The app builds an EPUB cookbook for e-ink readers (`src/cookbook.ts`): a contents page grouped by fish, chicken, meat, vegetarian and brunch, a **This week** page with the coming dinners (the same days as the dinner menu sensor, each linked to its recipe) and the shopping list of every current plan grouped by store aisle (items already ticked in the panel are left out), one page per recipe (ingredients to buy, cupboard staples, method, notes, which day it is planned for) and an index by main ingredient. Planned meals that were never saved as recipes get a page too, under "From this week's plan". The book is rebuilt on each request from the current data; the same data gives byte-identical files, so a reader can skip downloads by ETag.
+
+Recipe screens have an **📖 Open on Kindle** button. It records a request for that recipe at the servings shown; the KOReader plugin in `kindle/ruoka.koplugin` asks for pending requests every 5 seconds while KOReader is open (backing off to once a minute when the app is unreachable), downloads the recipe as a one-recipe book, opens it, and reports back, so the button can show "Opened on the Kindle". A request nobody picks up expires after 10 minutes. The plugin also refreshes the full cookbook at start, on waking and every 30 minutes, into `documents/Ruoka-Cookbook.epub`, and adds a **Ruoka cookbook** menu under Tools (update now, open the cookbook, on/off, server address).
+
+The Kindle cannot log in to Home Assistant, so this side is served by a separate listener (`RUOKA_KINDLE_PORT`, 3004) that the app maps to the host's port 3004 (Network tab; clear it to turn the feature off). It is meant for the home network only and does not go through Tailscale or the Funnel. It answers only `GET`/`HEAD /cookbook.epub`, `GET /kindle/request`, the requested recipe at `/kindle/recipe/<request id>.epub` and `POST /kindle/opened/<request id>`; everything else is 404, recipes cannot be fetched by name, and nothing can be changed apart from marking the handed-out request as opened. The cookbook contains your recipes and current shopping lists (including notes such as portion counts and the store), so do not forward the port to the internet.
+
+To install the plugin on a jailbroken Kindle (or any KOReader device), copy `kindle/ruoka.koplugin` to `koreader/plugins/`, put the server address in `koreader/plugins/ruoka.koplugin/server.txt` (for example `http://192.168.1.10:3004`, Home Assistant's LAN address) or set it later in the plugin's menu, and restart KOReader.
+
 ### Backup and restore
 
 The app also saves a zip of everything once a day to `backups/ruoka-daily-YYYY-MM-DD.zip` in the data folder (the last 7 are kept, nothing is written while there are no recipes or plans). They are listed under **Saved backups** on the same screen, each with a download button. These copies live on the same disk as the data, so download one now and then to keep it elsewhere.
@@ -167,6 +177,7 @@ The server runs on `http://localhost:3001/mcp` by default (Streamable HTTP). Pas
 | `MCP_ALLOWED_IPS` | Optional comma-separated addresses or CIDR ranges allowed to use `/mcp`, `/token` and discovery |
 | `LOG_LEVEL` | pino log level (default: info) |
 | `BROWSER_DATA_DIR` | Persistent browser data directory (default: `.browser-data/`) |
+| `RUOKA_KINDLE_PORT` | Port of the home-network listener for the Kindle cookbook and "Open on Kindle" (off when unset; the Home Assistant app uses 3004) |
 
 
 
