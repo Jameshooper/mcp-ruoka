@@ -1,4 +1,10 @@
-import { buildCookbook, buildRecipeBook, buildWebRecipeBook } from "./cookbook.ts";
+import {
+	buildCaptionBook,
+	buildCookbook,
+	buildRecipeBook,
+	buildWebRecipeBook,
+} from "./cookbook.ts";
+import type { InstagramPost } from "./instagram.ts";
 import { logger } from "./logger.ts";
 import { listPlans } from "./plan-book.ts";
 import { findRecipe, listRecipes, scaleRecipe, slugify } from "./recipe-book.ts";
@@ -60,18 +66,46 @@ export async function requestOpenOnKindle(
 	return pending;
 }
 
-export function requestOpenWebRecipe(web: WebRecipe, now = Date.now()): KindleRequest {
+// Pages from the web are built when they are sent, since there is no saved recipe to rebuild
+function requestOpenBook(
+	recipe: string,
+	name: string,
+	servings: number,
+	book: Uint8Array,
+	now: number,
+) {
 	pending = {
 		id: crypto.randomUUID(),
-		recipe: `web-${slugify(web.name)}`.slice(0, 60),
-		name: web.name,
-		servings: web.servings ?? 0,
+		recipe: recipe.slice(0, 60),
+		name,
+		servings,
 		requestedAt: now,
 		openedAt: null,
-		book: buildWebRecipeBook(web, new Date(now)),
+		book,
 	};
-	logger.info({ site: web.site, name: web.name }, "Web recipe requested on the Kindle");
 	return pending;
+}
+
+export function requestOpenWebRecipe(web: WebRecipe, now = Date.now()): KindleRequest {
+	logger.info({ site: web.site, name: web.name }, "Web recipe requested on the Kindle");
+	return requestOpenBook(
+		`web-${slugify(web.name)}`,
+		web.name,
+		web.servings ?? 0,
+		buildWebRecipeBook(web, new Date(now)),
+		now,
+	);
+}
+
+export function requestOpenInstagram(post: InstagramPost, now = Date.now()): KindleRequest {
+	logger.info({ source: post.source }, "Instagram post requested on the Kindle");
+	return requestOpenBook(
+		`instagram-${slugify(post.title)}`,
+		post.title,
+		0,
+		buildCaptionBook(post, new Date(now)),
+		now,
+	);
 }
 
 function live(now: number): KindleRequest | null {
