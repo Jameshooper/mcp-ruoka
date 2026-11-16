@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1072" height="1448" viewBox="0 0 1072 1448">
+  <rect width="1072" height="1448" fill="#fff"/>
+  <!-- double frame, like an old cookbook -->
+  <rect x="44" y="44" width="984" height="1360" fill="none" stroke="#000" stroke-width="10"/>
+  <rect x="68" y="68" width="936" height="1312" fill="none" stroke="#000" stroke-width="3"/>
+
+  <text x="536" y="250" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="44" letter-spacing="14" fill="#000">THE FAMILY</text>
+  <text x="536" y="420" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="190" font-weight="bold" fill="#000">Ruoka</text>
+  <text x="536" y="510" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="64" font-style="italic" fill="#000">Cookbook</text>
+  <line x1="386" y1="566" x2="686" y2="566" stroke="#000" stroke-width="4"/>
+  <circle cx="536" cy="566" r="9" fill="#000"/>
+
+  <!-- steam -->
+  <g fill="none" stroke="#000" stroke-width="9" stroke-linecap="round">
+    <path d="M466 760 C 436 720, 496 690, 466 650 S 496 590, 466 560" transform="translate(0,60)"/>
+    <path d="M536 740 C 506 700, 566 670, 536 630 S 566 570, 536 540" transform="translate(0,60)"/>
+    <path d="M606 760 C 576 720, 636 690, 606 650 S 636 590, 606 560" transform="translate(0,60)"/>
+  </g>
+  <!-- pot -->
+  <g fill="none" stroke="#000" stroke-width="12" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M316 870 L 756 870"/>
+    <path d="M346 870 L 366 1110 Q 370 1150 410 1150 L 662 1150 Q 702 1150 706 1110 L 726 870"/>
+    <path d="M346 920 L 280 920 Q 256 920 256 944 L 256 956"/>
+    <path d="M726 920 L 792 920 Q 816 920 816 944 L 816 956"/>
+    <path d="M496 870 L 496 846 Q 496 826 516 826 L 556 826 Q 576 826 576 846 L 576 870"/>
+  </g>
+  <rect x="300" y="1150" width="472" height="0" stroke="#000" stroke-width="0"/>
+  <line x1="290" y1="1184" x2="782" y2="1184" stroke="#000" stroke-width="5" stroke-linecap="round"/>
+
+  <text x="536" y="1290" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="36" letter-spacing="4" fill="#000">RECIPES · MEAL PLANS · SHOPPING</text>
+</svg>

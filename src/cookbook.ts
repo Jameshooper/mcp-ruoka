@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { buildMenu, localIsoDate, mealDate } from "./dinner-menu.ts";
 import type { InstagramPost } from "./instagram.ts";
 import type { MealPlan } from "./plan-book.ts";
@@ -9,6 +11,10 @@ import { zipFiles } from "./zip.ts";
 // links, so it works on any reader; a "This week" page carries the dinner plan and shopping list.
 
 type Ingredient = Recipe["ingredients"][number];
+
+// KOReader shows the book's cover as the Kindle's sleep screen. cookbook-cover.svg is the source:
+// it is drawn at the Paperwhite's 1072x1448 and saved as greyscale PNG for e-ink
+const COOKBOOK_COVER = readFileSync(join(import.meta.dirname, "cookbook-cover.png"));
 
 interface Page {
 	file: string;
@@ -320,8 +326,9 @@ function packageEpub(options: {
 	nav: Array<{ label: string; file: string; children?: Array<{ label: string; file: string }> }>;
 	modified: Date;
 	identifier: string;
+	cover?: Uint8Array;
 }): Uint8Array {
-	const { title, pages, nav, modified, identifier } = options;
+	const { title, pages, nav, modified, identifier, cover } = options;
 	const stamp = `${modified.toISOString().slice(0, 19)}Z`;
 
 	const navList = nav
@@ -360,13 +367,18 @@ function packageEpub(options: {
 		'<item id="css" href="style.css" media-type="text/css"/>',
 		'<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
 		'<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>',
+		...(cover
+			? [
+					'<item id="cover-image" href="cover.png" media-type="image/png" properties="cover-image"/>',
+				]
+			: []),
 		...pages.map(
 			(p, i) => `<item id="p${i}" href="${p.file}" media-type="application/xhtml+xml"/>`,
 		),
 	].join("");
 	const spine = pages.map((_, i) => `<itemref idref="p${i}"/>`).join("");
 	const opf = `<?xml version="1.0" encoding="utf-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="en"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bookid">${escapeXml(identifier)}</dc:identifier><dc:title>${escapeXml(title)}</dc:title><dc:creator>Ruoka</dc:creator><dc:language>en</dc:language><meta property="dcterms:modified">${stamp}</meta></metadata><manifest>${manifest}</manifest><spine toc="ncx">${spine}</spine></package>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="en"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bookid">${escapeXml(identifier)}</dc:identifier><dc:title>${escapeXml(title)}</dc:title><dc:creator>Ruoka</dc:creator><dc:language>en</dc:language><meta property="dcterms:modified">${stamp}</meta>${cover ? '<meta name="cover" content="cover-image"/>' : ""}</metadata><manifest>${manifest}</manifest><spine toc="ncx">${spine}</spine></package>
 `;
 	const container = `<?xml version="1.0" encoding="utf-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>
@@ -383,6 +395,8 @@ function packageEpub(options: {
 			{ name: "OEBPS/nav.xhtml", data: ENCODER.encode(navDoc) },
 			{ name: "OEBPS/style.css", data: ENCODER.encode(CSS) },
 			...pages.map((p) => ({ name: `OEBPS/${p.file}`, data: ENCODER.encode(p.body) })),
+			// PNG is already compressed
+			...(cover ? [{ name: "OEBPS/cover.png", data: cover, stored: true }] : []),
 		],
 		modified,
 	);
@@ -564,6 +578,7 @@ export function buildCookbook(
 		],
 		modified,
 		identifier: "urn:ruoka:cookbook",
+		cover: COOKBOOK_COVER,
 	});
 }
 
