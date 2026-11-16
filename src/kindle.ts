@@ -1,7 +1,8 @@
-import { buildCookbook, buildRecipeBook } from "./cookbook.ts";
+import { buildCookbook, buildRecipeBook, buildWebRecipeBook } from "./cookbook.ts";
 import { logger } from "./logger.ts";
 import { listPlans } from "./plan-book.ts";
-import { findRecipe, listRecipes, scaleRecipe } from "./recipe-book.ts";
+import { findRecipe, listRecipes, scaleRecipe, slugify } from "./recipe-book.ts";
+import type { WebRecipe } from "./web-recipe.ts";
 
 // The Kindle side of the app. A KOReader plugin on the Kindle asks this server, every few seconds
 // while KOReader is open, whether a recipe should be shown, and keeps the cookbook up to date.
@@ -24,6 +25,8 @@ export interface KindleRequest {
 	servings: number;
 	requestedAt: number;
 	openedAt: number | null;
+	// A recipe sent from the web is built when it is sent, since there is no saved recipe to rebuild
+	book?: Uint8Array;
 }
 
 let pending: KindleRequest | null = null;
@@ -54,6 +57,20 @@ export async function requestOpenOnKindle(
 		openedAt: null,
 	};
 	logger.info({ recipe: recipe.id, servings: wanted }, "Recipe requested on the Kindle");
+	return pending;
+}
+
+export function requestOpenWebRecipe(web: WebRecipe, now = Date.now()): KindleRequest {
+	pending = {
+		id: crypto.randomUUID(),
+		recipe: `web-${slugify(web.name)}`.slice(0, 60),
+		name: web.name,
+		servings: web.servings ?? 0,
+		requestedAt: now,
+		openedAt: null,
+		book: buildWebRecipeBook(web, new Date(now)),
+	};
+	logger.info({ site: web.site, name: web.name }, "Web recipe requested on the Kindle");
 	return pending;
 }
 
@@ -135,6 +152,7 @@ export async function handleKindleRequest(req: Request, now = Date.now()): Promi
 	if (recipeMatch && read) {
 		const request = live(now);
 		if (!request || request.id !== recipeMatch[1]) return plain(404, "No such request");
+		if (request.book) return epubResponse(req, request.book, "Now cooking.epub");
 		const recipe = await findRecipe(request.recipe);
 		if (!recipe) return plain(404, "Recipe not found");
 		const scaled =

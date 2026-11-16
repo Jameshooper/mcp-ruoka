@@ -1,6 +1,7 @@
 import { buildMenu, localIsoDate, mealDate } from "./dinner-menu.ts";
 import type { MealPlan } from "./plan-book.ts";
 import type { Recipe } from "./recipe-book.ts";
+import type { WebRecipe } from "./web-recipe.ts";
 import { zipFiles } from "./zip.ts";
 
 // An EPUB cookbook for e-ink readers (built for KOReader on a Kindle). Pages are plain XHTML with
@@ -581,5 +582,61 @@ export function buildRecipeBook(recipe: Recipe): Uint8Array {
 		nav: [{ label: recipe.name, file: "recipe.xhtml" }],
 		modified: new Date(Date.parse(recipe.updatedAt) || 0),
 		identifier: `urn:ruoka:recipe:${recipe.id}:${recipe.servings}`,
+	});
+}
+
+// A recipe found on the web and sent from the phone's share sheet. Its ingredients are the site's
+// own lines ("2 tbsp olive oil"), so they are listed as written instead of in the quantity table.
+export function buildWebRecipeBook(web: WebRecipe, now = new Date()): Uint8Array {
+	const meta: string[] = [];
+	if (web.yieldText) meta.push(web.servings ? `Serves ${web.servings}` : web.yieldText);
+	const total = web.totalMinutes ?? ((web.prepMinutes ?? 0) + (web.cookMinutes ?? 0) || undefined);
+	if (total) {
+		const split =
+			web.prepMinutes !== undefined && web.cookMinutes !== undefined
+				? ` (prep ${minutes(web.prepMinutes)}, cook ${minutes(web.cookMinutes)})`
+				: "";
+		meta.push(`${minutes(total)}${split}`);
+	}
+	if (web.kcal) meta.push(`${web.kcal} kcal a portion`);
+
+	const parts = [
+		`<h1>${escapeXml(web.name)}</h1>`,
+		meta.length ? `<p class="meta">${escapeXml(meta.join(" · "))}</p>` : "",
+		`<p class="small">From ${escapeXml(web.site)}</p>`,
+		web.description ? `<p class="tags">${escapeXml(web.description)}</p>` : "",
+		"<h2>Ingredients</h2>",
+		`<ul>${web.ingredients.map((i) => `<li>${escapeXml(i)}</li>`).join("")}</ul>`,
+	];
+	if (web.steps.length) {
+		parts.push("<h2>Method</h2>");
+		let section: string | undefined;
+		let open = false;
+		for (const step of web.steps) {
+			if (step.section !== section || !open) {
+				if (open) parts.push("</ol>");
+				section = step.section;
+				if (section) parts.push(`<h3>${escapeXml(section)}</h3>`);
+				parts.push('<ol class="method">');
+				open = true;
+			}
+			parts.push(`<li>${escapeXml(step.text)}</li>`);
+		}
+		if (open) parts.push("</ol>");
+	}
+	parts.push(`<p class="note">Source: ${escapeXml(web.source)}</p>`);
+
+	return packageEpub({
+		title: web.name,
+		pages: [
+			{
+				file: "recipe.xhtml",
+				title: web.name,
+				body: page(web.name, parts.filter(Boolean).join("\n")),
+			},
+		],
+		nav: [{ label: web.name, file: "recipe.xhtml" }],
+		modified: now,
+		identifier: `urn:ruoka:web:${web.source}`,
 	});
 }
