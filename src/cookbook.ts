@@ -647,7 +647,7 @@ export function buildWebRecipeBook(web: WebRecipe, now = new Date()): Uint8Array
 // Kindle fonts have no emoji, which would show as empty boxes
 function noEmoji(text: string): string {
 	return text
-		.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{1F3FB}-\u{1F3FF}]/gu, "")
+		.replace(/\p{Extended_Pictographic}|\u{FE0F}|\u{200D}|[\u{1F3FB}-\u{1F3FF}]/gu, "")
 		.replace(/\s+/g, " ")
 		.trim();
 }
