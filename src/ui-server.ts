@@ -30,6 +30,7 @@ import {
 } from "./recipe-book.ts";
 import { ImportModeSchema } from "./schemas.ts";
 import { getStoreNames } from "./store-names.ts";
+import { IMPORT_TAG, webRecipeToInput } from "./web-import.ts";
 import { fetchWebRecipe, type WebFetch, WebRecipeError } from "./web-recipe.ts";
 
 // Replaced in tests so no real site is contacted
@@ -79,6 +80,11 @@ const RatingBodySchema = z.object({
 	rating: z.number().int().min(1).max(5).nullable(),
 	review: z.string().max(2000).optional(),
 });
+
+// The Shortcut shows `message`, so a failure carries its reason there too
+function shareError(error: WebRecipeError): Response {
+	return json({ error: error.message, message: error.message }, error.status);
+}
 
 function json(body: unknown, status = 200): Response {
 	return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -339,7 +345,36 @@ async function routeUiRequest(req: Request): Promise<Response> {
 				...kindleStatus(),
 			});
 		} catch (error) {
-			if (error instanceof WebRecipeError) return json({ error: error.message }, error.status);
+			if (error instanceof WebRecipeError) return shareError(error);
+			throw error;
+		}
+	}
+
+	// The share sheet's other target: keep a recipe found on the web in the recipe book
+	if (path === "/api/recipes/import-url" && req.method === "POST") {
+		if (!req.headers.get("content-type")?.includes("application/json")) {
+			return json({ error: "Expected JSON" }, 415);
+		}
+		const body = KindleUrlBodySchema.safeParse(await req.json().catch(() => null));
+		if (!body.success) return json({ error: "Send the page's address as url" }, 400);
+		try {
+			const input = webRecipeToInput(await fetchWebRecipe(body.data.url, webFetch));
+			// A recipe of the same name may have been edited or rated here; never overwrite it
+			const existing = await findRecipe(input.name);
+			if (existing) {
+				const message = `"${existing.name}" is already in Ruoka`;
+				return json({ error: message, message, exists: true, id: existing.id }, 409);
+			}
+			const { recipe } = await saveRecipe(input);
+			logger.info({ recipe: recipe.id, tag: IMPORT_TAG }, "Recipe imported from the web");
+			return json({
+				saved: true,
+				id: recipe.id,
+				name: recipe.name,
+				message: `Saved "${recipe.name}" to Ruoka`,
+			});
+		} catch (error) {
+			if (error instanceof WebRecipeError) return shareError(error);
 			throw error;
 		}
 	}
