@@ -8,7 +8,7 @@ import {
 	listBackupFiles,
 	previewBackup,
 } from "./backup.ts";
-import { kindleStatus, requestOpenOnKindle } from "./kindle.ts";
+import { kindleStatus, requestOpenOnKindle, requestOpenWebRecipe } from "./kindle.ts";
 import { logger } from "./logger.ts";
 import { sendNotification } from "./notify.ts";
 import {
@@ -30,6 +30,13 @@ import {
 } from "./recipe-book.ts";
 import { ImportModeSchema } from "./schemas.ts";
 import { getStoreNames } from "./store-names.ts";
+import { fetchWebRecipe, type WebFetch, WebRecipeError } from "./web-recipe.ts";
+
+// Replaced in tests so no real site is contacted
+let webFetch: WebFetch = fetch;
+export function setWebFetchForTests(fn: WebFetch): void {
+	webFetch = fn;
+}
 
 const uiDir = join(import.meta.dirname, "ui");
 const indexPath = join(uiDir, "index.html");
@@ -65,6 +72,8 @@ const KindleOpenBodySchema = z.object({
 	recipe: z.string().min(1).max(200),
 	servings: z.number().int().positive().max(100).optional(),
 });
+
+const KindleUrlBodySchema = z.object({ url: z.string().min(1).max(2000) });
 
 const RatingBodySchema = z.object({
 	rating: z.number().int().min(1).max(5).nullable(),
@@ -310,6 +319,29 @@ async function routeUiRequest(req: Request): Promise<Response> {
 		if (!body.success) return json({ error: "Invalid request" }, 400);
 		const request = await requestOpenOnKindle(body.data.recipe, body.data.servings);
 		return request ? json(kindleStatus()) : json({ error: "Recipe not found" }, 404);
+	}
+
+	// The phone's share sheet (an iOS Shortcut) sends a recipe page found on the web
+	if (path === "/api/kindle/open-url" && req.method === "POST") {
+		if (!req.headers.get("content-type")?.includes("application/json")) {
+			return json({ error: "Expected JSON" }, 415);
+		}
+		const body = KindleUrlBodySchema.safeParse(await req.json().catch(() => null));
+		if (!body.success) return json({ error: "Send the page's address as url" }, 400);
+		try {
+			const web = await fetchWebRecipe(body.data.url, webFetch);
+			requestOpenWebRecipe(web);
+			return json({
+				sent: true,
+				name: web.name,
+				site: web.site,
+				message: `Sent "${web.name}" to the Kindle`,
+				...kindleStatus(),
+			});
+		} catch (error) {
+			if (error instanceof WebRecipeError) return json({ error: error.message }, error.status);
+			throw error;
+		}
 	}
 
 	if (path === "/api/plans" && req.method === "GET") {
