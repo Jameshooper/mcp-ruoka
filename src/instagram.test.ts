@@ -169,3 +169,22 @@ test("when the embed page has no caption, the post page's preview tags are read 
 		}),
 	).rejects.toThrow("Could not reach Instagram");
 });
+
+test("the app lists the inbox and removes a post from it", async () => {
+	const { handleUiRequest } = await import("./ui-server.ts");
+	const { addInstagramDraft } = await import("./draft-book.ts");
+	await addInstagramDraft({
+		source: "https://www.instagram.com/p/Inbox1/",
+		title: "Soup",
+		lines: ["Soup", "- 1 l stock"],
+	});
+	const Drafts = z.object({ drafts: z.array(z.object({ id: z.string(), title: z.string() })) });
+	const listed = Drafts.parse(
+		await (await handleUiRequest(new Request("http://x/api/drafts"))).json(),
+	);
+	expect(listed.drafts.map((d) => d.id)).toContain("instagram-Inbox1");
+	const remove = () =>
+		handleUiRequest(new Request("http://x/api/drafts/instagram-Inbox1", { method: "DELETE" }));
+	expect((await remove()).status).toBe(200);
+	expect((await remove()).status).toBe(404);
+});

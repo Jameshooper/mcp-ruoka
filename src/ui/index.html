@@ -378,9 +378,16 @@ a.btn:active { transform: scale(0.96); }
 a.btn.primary { background: var(--accent); color: #fff; }
 @media (prefers-color-scheme: dark) { a.btn.primary { color: #2b1a12; } }
 .claude-row button.linkbtn,
-.detail .claude-row button.linkbtn { appearance: none; border: 0; background: none; border-radius: 0; font-weight: 500; padding: 6px 4px; color: var(--label2); font-size: 14px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.detail .claude-row button.linkbtn,
+.inbox-item .linkbtn { appearance: none; border: 0; background: none; border-radius: 0; font-weight: 500; padding: 6px 4px; color: var(--label2); font-size: 14px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .starter { background: color-mix(in srgb, var(--surface) 72%, transparent); -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); border-radius: 22px; padding: 16px 18px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
 .starter h2 { font-family: var(--serif); font-size: 20px; margin: 0 0 4px; }
+.inbox-item { border-top: 0.5px solid var(--sep); padding-top: 12px; margin-top: 12px; }
+.inbox-item h3 { margin: 0 0 2px; font-size: 17px; }
+.inbox-item .caption { white-space: pre-line; font-size: 15px; color: var(--label2); margin: 6px 0 0; }
+.inbox-item .claude-row { margin-top: 10px; }
+.inbox-item .row { display: flex; gap: 14px; align-items: center; margin-top: 2px; }
+.inbox-item a.linkbtn { display: inline-block; }
 .claude-row { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin: 14px 0 4px; }
 
 /* Navigation bar with back button */
@@ -572,6 +579,7 @@ label.line .meta { font-size: 14px; }
   </header>
 
   <div id="list-view">
+    <div id="inbox" class="hidden"></div>
     <div class="search">
       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg>
       <input type="search" id="search" placeholder="Search name, ingredient or tag" aria-label="Search recipes">
@@ -623,6 +631,7 @@ let recipes = [];
 let plans = [];
 let tab = "recipes";
 let storeNames = {};
+let drafts = [];
 
 const $ = (id) => document.getElementById(id);
 
@@ -1041,12 +1050,64 @@ function renderTags() {
   select.value = tags.includes(current) ? current : "";
 }
 
+function draftPrompt(draft) {
+  const from = [draft.author ? `by @${draft.author}` : "", draft.source].filter(Boolean).join(", ");
+  return withNote(
+    `Add a recipe from my Ruoka inbox: the Instagram post "${draft.title}" (${from}).\n\nUse list_recipe_drafts and read the caption of draft "${draft.id}". Turn it into a Ruoka recipe and save it with save_recipe, passing fromDraft "${draft.id}" so it leaves the inbox: the dish name, servings (estimate if the caption does not say, and tell me), every ingredient with the total quantity in g, ml or pcs and Finnish base-form search terms, the method as numbered steps, prep and cook minutes, protein, vegetables, nutrition per portion, and the post link in notes. Then show me what you saved. If the caption has no actual recipe in it, tell me instead of saving anything.`,
+  );
+}
+
+async function removeDraft(draft) {
+  if (!confirm(`Remove "${draft.title}" from the inbox? The Instagram post itself is not affected.`)) return;
+  try {
+    await api(`api/drafts/${encodeURIComponent(draft.id)}`, { method: "DELETE" });
+  } catch (error) {
+    alert(`Could not remove it: ${error.message}`);
+    return;
+  }
+  drafts = drafts.filter((d) => d.id !== draft.id);
+  renderInbox();
+}
+
+// Shared Instagram posts carry no recipe data, so they wait here until Claude makes recipes of them
+function renderInbox() {
+  const box = $("inbox");
+  box.className = drafts.length ? "starter" : "hidden";
+  if (drafts.length === 0) {
+    box.replaceChildren();
+    return;
+  }
+  box.replaceChildren(
+    el("h2", {}, "Inbox"),
+    el("div", { class: "meta" }, `${drafts.length} shared ${drafts.length === 1 ? "post" : "posts"} waiting. Claude turns each one into a recipe.`),
+    ...drafts.map((draft) => {
+      const preview = draft.caption.split("\n").filter(Boolean).slice(1).join("\n");
+      return el("div", { class: "inbox-item" },
+        el("h3", {}, draft.title),
+        el("div", { class: "meta" }, [draft.author ? `@${draft.author}` : "", "Instagram", new Date(draft.createdAt).toLocaleDateString()].filter(Boolean).join(" · ")),
+        preview ? el("details", {}, el("summary", {}, "Caption"), el("p", { class: "caption" }, preview)) : null,
+        claudeActions([{ label: "✨ Add to app", text: () => draftPrompt(draft), primary: true }]),
+        el("div", { class: "row" },
+          el("a", { class: "linkbtn", href: draft.source, target: "_blank", rel: "noopener" }, "Open post"),
+          el("button", { type: "button", class: "linkbtn", onclick: () => removeDraft(draft) }, "Remove"),
+        ),
+      );
+    }),
+  );
+}
+
+async function loadDrafts() {
+  drafts = (await api("api/drafts").catch(() => ({ drafts: [] }))).drafts;
+  renderInbox();
+}
+
 async function load() {
   config = await api("api/config").catch(() => config);
   storeNames = (await api("api/stores").catch(() => ({ names: {} }))).names;
   recipes = (await api("api/recipes")).recipes;
   renderTags();
   renderList();
+  await loadDrafts();
 }
 
 function formatQuantity(q, factor) {
@@ -1633,6 +1694,10 @@ $("tab-plans").addEventListener("click", async () => {
 });
 
 for (const id of ["search", "tag", "protein", "sort"]) $(id).addEventListener("input", renderList);
+// After "Add to app" Claude saves the recipe in another app; coming back shows it and clears the inbox
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && tab === "recipes") load().catch(() => {});
+});
 load().catch((error) => {
   const empty = $("empty");
   empty.classList.remove("hidden");
