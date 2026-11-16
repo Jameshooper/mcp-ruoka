@@ -142,3 +142,69 @@ test("the app refuses unknown recipes and requests without JSON", async () => {
 	);
 	expect(form.status).toBe(415);
 });
+
+function planSnapshot(meals: Array<Record<string, unknown>>) {
+	const emptyList = { total: 0, lines: [] };
+	return {
+		store: { chain: "s-kaupat" as const, storeId: "1" },
+		meals: meals.map((m) => ({ name: "dinner", servings: 1, ingredients: [], steps: [], ...m })),
+		toBuy: emptyList,
+		pantry: emptyList,
+		balance: { balanced: true, issues: [], counts: {} },
+		nutrition: { average: null, missing: [] },
+		missing: [],
+		unquantified: [],
+		waste: { leftoverValue: 0 },
+		pooling: { saved: 0 },
+	};
+}
+
+test("the dinner-menu display sends the evening it shows", async () => {
+	const { savePlan } = await import("./plan-book.ts");
+	const { handleKindleRequest, requestOpenDinner } = await import("./kindle.ts");
+	await savePlan(
+		"Dinners 16-17 Nov",
+		planSnapshot([
+			{
+				name: "Mon 16 Nov dinner",
+				dish: "Teriyaki chicken stir-fry",
+				date: "2026-11-16",
+				ingredients: [
+					{ english: "chicken strips", finnish: ["kana"], quantity: { amount: 200, unit: "g" } },
+				],
+				steps: ["Fry the chicken", "Add the sauce"],
+			},
+			{ name: "Tue 17 Nov dinner", dish: "Salmon soup", date: "2026-11-17", servings: 4 },
+			{ name: "Wed 18 Nov dinner", dish: "Leftovers", date: "2026-11-18" },
+		]),
+	);
+	const now = new Date(2026, 10, 16, 17, 0).getTime();
+
+	// A planned dinner never saved as a recipe goes over as its own book
+	const tonight = await requestOpenDinner("Mon 16 Nov", now);
+	expect(tonight.ok).toBe(true);
+	expect(tonight.message).toBe("Open KOReader on the Kindle");
+	const handed = RequestJson.parse(
+		await (await handleKindleRequest(get("/kindle/request"), now)).json(),
+	);
+	expect(handed.recipe).toBe("plan-teriyaki-chicken-stir-fry");
+	const book = await handleKindleRequest(get(handed.url), now);
+	expect(book.status).toBe(200);
+	expect(book.headers.get("content-type")).toBe("application/epub+zip");
+
+	// A dish with a saved recipe sends that recipe, at the plan's servings, and the Kindle has just
+	// asked, so it counts as listening
+	const tomorrow = await requestOpenDinner("2026-11-17", now);
+	expect(tomorrow).toMatchObject({ ok: true, message: "Sent to the Kindle" });
+	if (tomorrow.ok) expect(tomorrow.request).toMatchObject({ recipe: "salmon-soup", servings: 4 });
+
+	expect(await requestOpenDinner("Wed 18 Nov", now)).toEqual({
+		ok: false,
+		message: "No recipe for Wed 18 Nov",
+	});
+	expect(await requestOpenDinner("Thu 19 Nov", now)).toEqual({
+		ok: false,
+		message: "Nothing planned for Thu 19 Nov",
+	});
+	expect(await requestOpenDinner("someday", now)).toEqual({ ok: false, message: "Unknown day" });
+});
