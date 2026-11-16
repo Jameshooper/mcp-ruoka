@@ -1,9 +1,11 @@
 import {
 	buildCaptionBook,
 	buildCookbook,
+	buildMealBook,
 	buildRecipeBook,
 	buildWebRecipeBook,
 } from "./cookbook.ts";
+import { dayLabel, dinnersByDate, mealDate } from "./dinner-menu.ts";
 import type { InstagramPost } from "./instagram.ts";
 import { logger } from "./logger.ts";
 import { listPlans } from "./plan-book.ts";
@@ -106,6 +108,50 @@ export function requestOpenInstagram(post: InstagramPost, now = Date.now()): Kin
 		buildCaptionBook(post, new Date(now)),
 		now,
 	);
+}
+
+export type DinnerSendResult =
+	| { ok: true; message: string; request: KindleRequest }
+	| { ok: false; message: string };
+
+// The dinner-menu display's button sends the evening it is showing, as the display labels it
+// ("Mon 16 Nov") or as a calendar date. Messages are short because the display shows them.
+export async function requestOpenDinner(day: string, now = Date.now()): Promise<DinnerSendResult> {
+	const date = mealDate({ name: day, date: day }, new Date(now).toISOString());
+	if (!date) return { ok: false, message: "Unknown day" };
+	const [y, m, d] = date.split("-").map(Number);
+	const label = dayLabel(new Date(y ?? 0, (m ?? 1) - 1, d ?? 1));
+	const found = dinnersByDate(await listPlans()).get(date);
+	if (!found) return { ok: false, message: `Nothing planned for ${label}` };
+	const { meal } = found;
+	const dish = meal.dish ?? meal.name;
+
+	// Like the cookbook, prefer the saved recipe: it is the one that gets edited and rated
+	const recipes = await listRecipes();
+	const saved =
+		(meal.recipe ? recipes.find((r) => r.id === meal.recipe) : undefined) ??
+		recipes.find((r) => r.name.toLowerCase() === dish.toLowerCase());
+	let request: KindleRequest | null = null;
+	if (saved) {
+		request = await requestOpenOnKindle(saved.id, meal.servings, now);
+	} else if (meal.steps.length || meal.ingredients.length) {
+		request = requestOpenBook(
+			`plan-${slugify(dish)}`,
+			dish,
+			meal.servings,
+			buildMealBook(meal, dish, new Date(now)),
+			now,
+		);
+		logger.info({ dish, date }, "Planned dinner requested on the Kindle");
+	}
+	if (!request) return { ok: false, message: `No recipe for ${label}` };
+	return {
+		ok: true,
+		// A Kindle that has not asked lately is asleep or out of KOReader, and gets the recipe
+		// only if it asks within the next 10 minutes
+		message: kindleStatus(now).seenRecently ? "Sent to the Kindle" : "Open KOReader on the Kindle",
+		request,
+	};
 }
 
 function live(now: number): KindleRequest | null {
