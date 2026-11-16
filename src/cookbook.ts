@@ -1,4 +1,5 @@
 import { buildMenu, localIsoDate, mealDate } from "./dinner-menu.ts";
+import type { InstagramPost } from "./instagram.ts";
 import type { MealPlan } from "./plan-book.ts";
 import type { Recipe } from "./recipe-book.ts";
 import type { WebRecipe } from "./web-recipe.ts";
@@ -638,5 +639,63 @@ export function buildWebRecipeBook(web: WebRecipe, now = new Date()): Uint8Array
 		nav: [{ label: web.name, file: "recipe.xhtml" }],
 		modified: now,
 		identifier: `urn:ruoka:web:${web.source}`,
+	});
+}
+
+// An Instagram caption has no structure to rely on, so it is laid out line by line: bullet and
+// numbered lines become lists, short lines ending in a colon become headings
+// Kindle fonts have no emoji, which would show as empty boxes
+function noEmoji(text: string): string {
+	return text
+		.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{1F3FB}-\u{1F3FF}]/gu, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+export function buildCaptionBook(shared: InstagramPost, now = new Date()): Uint8Array {
+	const post = {
+		...shared,
+		title: noEmoji(shared.title) || shared.title,
+		lines: shared.lines.map(noEmoji),
+	};
+	const parts = [
+		`<h1>${escapeXml(post.title)}</h1>`,
+		`<p class="small">From ${escapeXml(post.author ? `@${post.author} on Instagram` : "Instagram")}</p>`,
+	];
+	let list: "ul" | "ol" | null = null;
+	const close = () => {
+		if (list) parts.push(`</${list}>`);
+		list = null;
+	};
+	for (const line of post.lines.slice(post.lines.indexOf(post.title) + 1)) {
+		const bullet = /^[-–•*·▪✔]\uFE0F?\s*(.+)$/u.exec(line);
+		const numbered = /^\d{1,2}[.)]\s*(.+)$/.exec(line);
+		const kind = bullet ? "ul" : numbered ? "ol" : null;
+		const item = bullet?.[1] ?? numbered?.[1];
+		if (kind && item) {
+			if (list !== kind) {
+				close();
+				parts.push(kind === "ol" ? '<ol class="method">' : "<ul>");
+				list = kind;
+			}
+			parts.push(`<li>${escapeXml(item)}</li>`);
+			continue;
+		}
+		close();
+		if (!line) continue;
+		parts.push(
+			line.length <= 60 && line.endsWith(":")
+				? `<h3>${escapeXml(line.slice(0, -1))}</h3>`
+				: `<p>${escapeXml(line)}</p>`,
+		);
+	}
+	close();
+	parts.push(`<p class="note">Source: ${escapeXml(post.source)}</p>`);
+	return packageEpub({
+		title: post.title,
+		pages: [{ file: "recipe.xhtml", title: post.title, body: page(post.title, parts.join("\n")) }],
+		nav: [{ label: post.title, file: "recipe.xhtml" }],
+		modified: now,
+		identifier: `urn:ruoka:instagram:${post.source}`,
 	});
 }

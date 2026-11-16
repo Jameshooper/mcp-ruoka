@@ -245,7 +245,7 @@ export function checkUrl(raw: string): URL {
 	return url;
 }
 
-async function readCapped(response: Response): Promise<string> {
+export async function readCapped(response: Response): Promise<string> {
 	const reader = response.body?.getReader();
 	if (!reader) return "";
 	const chunks: Uint8Array[] = [];
@@ -265,6 +265,14 @@ async function readCapped(response: Response): Promise<string> {
 
 export type WebFetch = (url: URL, init: RequestInit) => Promise<Response>;
 export type BrowserFetch = (url: URL) => Promise<string | null>;
+
+// Sites answer a phone's browser more readily than an unnamed client
+export const PAGE_HEADERS = {
+	"User-Agent":
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+	Accept: "text/html,application/xhtml+xml",
+	"Accept-Language": "en,fi;q=0.8",
+};
 
 const BLOCKED_STATUSES = new Set([401, 402, 403, 429, 503]);
 
@@ -309,12 +317,7 @@ export async function fetchWebRecipe(
 			response = await fetchFn(url, {
 				redirect: "manual",
 				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-				headers: {
-					"User-Agent":
-						"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
-					Accept: "text/html,application/xhtml+xml",
-					"Accept-Language": "en,fi;q=0.8",
-				},
+				headers: PAGE_HEADERS,
 			});
 		} catch {
 			throw new WebRecipeError("Could not load that page", 502);

@@ -66,11 +66,13 @@ test("every tool says whether it changes data, deletes are marked destructive, a
 		[
 			"delete_meal_plan",
 			"delete_recipe",
+			"delete_recipe_draft",
 			"find_recipe_ingredients",
 			"get_meal_plan",
 			"get_recipe",
 			"get_stores",
 			"list_meal_plans",
+			"list_recipe_drafts",
 			"list_recipes",
 			"plan_meals",
 			"rate_meal_plan",
@@ -172,4 +174,27 @@ test("oversized free text is refused before anything is saved or looked up", asy
 
 	// the limits leave normal use alone
 	expect(await rejected("save_recipe", recipeArgs)).toBe(false);
+});
+
+test("Claude empties the Instagram inbox by saving each draft as a recipe", async () => {
+	const { addInstagramDraft, listDrafts } = await import("../draft-book.ts");
+	await addInstagramDraft({
+		source: "https://www.instagram.com/p/Abc123/",
+		author: "cook",
+		title: "Rice bowl",
+		lines: ["Rice bowl", "-400 g rice"],
+	});
+	const drafts = ResultSchema.parse(
+		await client.callTool({ name: "list_recipe_drafts", arguments: {} }),
+	);
+	expect(drafts.content[0]?.text).toContain("instagram-Abc123");
+	const saved = ResultSchema.parse(
+		await client.callTool({
+			name: "save_recipe",
+			arguments: { ...recipeArgs, name: "Rice bowl", fromDraft: "instagram-Abc123" },
+		}),
+	);
+	expect(saved.content[0]?.text).toContain('"draftRemoved": true');
+	expect(await listDrafts()).toEqual([]);
+	expect(await rejected("delete_recipe_draft", { draft: "instagram-Abc123" })).toBe(true);
 });
