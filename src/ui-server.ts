@@ -8,7 +8,7 @@ import {
 	listBackupFiles,
 	previewBackup,
 } from "./backup.ts";
-import { addInstagramDraft } from "./draft-book.ts";
+import { addInstagramDraft, deleteDraft, listDrafts } from "./draft-book.ts";
 import { fetchInstagramPost, isInstagramLink } from "./instagram.ts";
 import {
 	kindleStatus,
@@ -389,7 +389,7 @@ async function routeUiRequest(req: Request): Promise<Response> {
 				const { draft, existed } = await addInstagramDraft(post);
 				const message = existed
 					? `"${draft.title}" is already in Ruoka's inbox`
-					: `Saved "${draft.title}" to Ruoka's inbox. Ask Claude to turn it into a recipe`;
+					: `Saved "${draft.title}" to Ruoka's inbox. Open Ruoka and tap Add to app`;
 				return shareReply(!existed, message, {
 					saved: !existed,
 					draft: draft.id,
@@ -417,6 +417,16 @@ async function routeUiRequest(req: Request): Promise<Response> {
 			if (error instanceof WebRecipeError) return shareError(error);
 			throw error;
 		}
+	}
+
+	// The inbox: Instagram posts shared to Ruoka, waiting for Claude to make recipes of them
+	if (path === "/api/drafts" && req.method === "GET") {
+		return json({ drafts: await listDrafts() });
+	}
+	const draftMatch = /^\/api\/drafts\/([^/]+)$/.exec(path);
+	if (draftMatch?.[1] && req.method === "DELETE") {
+		const removed = await deleteDraft(decodeSegment(draftMatch[1]));
+		return removed ? json({ deleted: removed.id }) : json({ error: "Not in the inbox" }, 404);
 	}
 
 	if (path === "/api/plans" && req.method === "GET") {

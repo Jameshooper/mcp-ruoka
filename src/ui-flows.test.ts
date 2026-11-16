@@ -427,3 +427,36 @@ browserTest(
 	},
 	TIMEOUT,
 );
+
+browserTest(
+	"shared Instagram posts wait in the inbox, with a Claude link to add each one",
+	async () => {
+		const p = current();
+		expect(await p.isHidden("#inbox")).toBe(true);
+		const { addInstagramDraft } = await import("./draft-book.ts");
+		await addInstagramDraft({
+			source: "https://www.instagram.com/p/Wrap123/",
+			author: "jalal.cook",
+			title: "Korean BBQ Chicken Wraps",
+			lines: ["Korean BBQ Chicken Wraps", "", "- 900 g chicken thighs", "1. Air fry."],
+		});
+		await p.reload();
+		await p.waitForSelector("#inbox .inbox-item");
+		expect(await p.textContent("#inbox h3")).toBe("Korean BBQ Chicken Wraps");
+		expect(await p.textContent("#inbox")).toContain("@jalal.cook");
+		const message = await decodedHref("#inbox a.btn.primary");
+		expect(message).toContain('draft "instagram-Wrap123"');
+		expect(message).toContain('fromDraft "instagram-Wrap123"');
+		expect(message).toContain("Always pass avoidAllergens for cashew.");
+		expect(await p.getAttribute("#inbox a:has-text('Open post')", "href")).toBe(
+			"https://www.instagram.com/p/Wrap123/",
+		);
+
+		p.once("dialog", (dialog) => dialog.accept());
+		await p.click("#inbox button:has-text('Remove')");
+		await p.waitForSelector("#inbox.hidden", { state: "attached" });
+		const { listDrafts } = await import("./draft-book.ts");
+		expect(await listDrafts()).toEqual([]);
+	},
+	TIMEOUT,
+);
