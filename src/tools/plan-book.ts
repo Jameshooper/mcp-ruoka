@@ -1,9 +1,21 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { deletePlan, findPlan, listPlans, ratePlan } from "../plan-book.ts";
+import { deletePlan, findPlan, listPlans, type MealPlan, ratePlan } from "../plan-book.ts";
 
 function text(value: unknown) {
 	return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
+}
+
+// A saved plan for nine dinners is tens of thousands of characters, and the model carries it in
+// every later turn, so it goes out compact and without product links (the panel ticks items by
+// productId and never needed them)
+function planText(plan: MealPlan) {
+	const lines = (list: MealPlan["toBuy"]) => ({
+		...list,
+		lines: list.lines.map(({ url: _url, ...line }) => line),
+	});
+	const slim = { ...plan, toBuy: lines(plan.toBuy), pantry: lines(plan.pantry) };
+	return { content: [{ type: "text" as const, text: JSON.stringify(slim) }] };
 }
 
 function notFound(idOrName: string) {
@@ -57,7 +69,7 @@ export function registerPlanBookTools(server: McpServer): void {
 		},
 		async ({ plan }) => {
 			const found = await findPlan(plan);
-			return found ? text(found) : notFound(plan);
+			return found ? planText(found) : notFound(plan);
 		},
 	);
 

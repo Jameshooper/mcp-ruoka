@@ -436,7 +436,7 @@ test("a saved recipe's times carry into the saved plan's meal", async () => {
 	expect([meals?.[1]?.prepMinutes, meals?.[1]?.cookMinutes]).toEqual([undefined, 20]);
 });
 
-test("the reply is compact and leaves out product links, which the saved plan keeps", async () => {
+test("plan_meals and get_meal_plan replies are compact and leave out product links, which the saved plan keeps", async () => {
 	const { findPlan } = await import("../plan-book.ts");
 	const client = await connect();
 	const res = await client.callTool({
@@ -464,4 +464,13 @@ test("the reply is compact and leaves out product links, which the saved plan ke
 	expect(out.toBuy.lines[0]).not.toHaveProperty("url");
 	const plan = await findPlan("Slim reply");
 	expect(plan?.toBuy.lines[0]?.url).toBe("https://www.s-kaupat.fi/tuote/211");
+
+	// get_meal_plan slims the saved plan the same way
+	const got = await client.callTool({ name: "get_meal_plan", arguments: { plan: "Slim reply" } });
+	const gotText = (got as { content: Array<{ text: string }> }).content[0]?.text ?? "";
+	expect(gotText).not.toContain("\n");
+	const saved = parse(got);
+	expect(saved.toBuy.lines[0]).toMatchObject({ productId: "211" });
+	expect(saved.toBuy.lines[0]).not.toHaveProperty("url");
+	expect(saved.meals[0]).toMatchObject({ name: "Mon", servings: 2 });
 });
