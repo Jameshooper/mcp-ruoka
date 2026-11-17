@@ -39,6 +39,9 @@ export class KindleOutbox {
 	private pending: KindleRequest | null = null;
 	private lastSeen: number | null = null;
 	private plugin: string | null = null;
+	// The release last written to the log, so a new plugin shows up there once instead of on every
+	// poll; undefined until the Kindle first asks after a restart
+	private loggedRelease: string | undefined;
 	private readonly listeners = new Set<OpenedListener>();
 
 	send(item: Sendable, origin: SendOrigin = { from: "app" }, now = Date.now()): KindleRequest {
@@ -68,6 +71,17 @@ export class KindleOutbox {
 		this.lastSeen = now;
 		const version = userAgent ? PLUGIN_RE.exec(userAgent)?.[1] : undefined;
 		if (version) this.plugin = version;
+		// The app's status page is only reachable through Home Assistant, so the log is the easy
+		// place to check that a plugin copied to the Kindle by hand is the one running
+		const release = version ?? "1";
+		if (release === this.loggedRelease) return;
+		this.loggedRelease = release;
+		if (version) logger.info({ pluginVersion: version }, `Kindle plugin release ${version}`);
+		else
+			logger.info(
+				{ pluginVersion: null },
+				"Kindle plugin release 1 (sends no version); copy kindle/ruoka.koplugin to update it",
+			);
 	}
 
 	// Only the request that was handed out can be marked, and only once
@@ -119,6 +133,7 @@ export class KindleOutbox {
 		this.pending = null;
 		this.lastSeen = null;
 		this.plugin = null;
+		this.loggedRelease = undefined;
 		this.listeners.clear();
 	}
 }
