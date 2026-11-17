@@ -3,6 +3,7 @@ import { listPlans } from "../plan-book.ts";
 import { listRecipes } from "../recipe-book.ts";
 import { buildCookbook } from "./cookbook.ts";
 import { outbox } from "./outbox.ts";
+import { sendTonightIfDue } from "./send.ts";
 
 // The Kindle's own listener. The Kindle cannot log in to Home Assistant, so this is open to the
 // home network; it only serves the cookbook and the book that was sent, and changes nothing except
@@ -48,6 +49,12 @@ export async function handleKindleRequest(req: Request, now = Date.now()): Promi
 
 	if (path === "/kindle/request" && req.method === "GET") {
 		outbox.seen(now, userAgent);
+		try {
+			await sendTonightIfDue(now);
+		} catch (err) {
+			// The poll still answers; a broken plan file must not stop "Open on Kindle" working
+			logger.warn({ err }, "Could not send tonight's dinner to the Kindle");
+		}
 		const request = outbox.current(now);
 		if (!request || request.openedAt) return new Response(null, { status: 204 });
 		return Response.json(

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, setSystemTime, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,9 @@ import * as z from "zod/v4";
 let dir = "";
 
 beforeAll(async () => {
+	// In the evening the Kindle is handed tonight's dinner on its own, so tests that poll without
+	// a time of their own run in the morning
+	setSystemTime(new Date(2026, 10, 18, 9, 0));
 	dir = await mkdtemp(join(tmpdir(), "ruoka-kindle-"));
 	process.env.RUOKA_DATA_DIR = dir;
 	const { saveRecipe } = await import("../recipe-book.ts");
@@ -21,6 +24,7 @@ beforeAll(async () => {
 	});
 });
 afterAll(async () => {
+	setSystemTime();
 	await rm(dir, { recursive: true, force: true });
 });
 beforeEach(async () => {
@@ -219,6 +223,67 @@ test("the dinner-menu display sends the evening it shows", async () => {
 		message: "Unknown day",
 		date: null,
 	});
+});
+
+test("in the evening the Kindle gets tonight's dinner once, without taking over a recipe sent later", async () => {
+	const { savePlan } = await import("../plan-book.ts");
+	const { handleKindleRequest } = await import("./server.ts");
+	const { requestOpenOnKindle } = await import("./send.ts");
+	await savePlan(
+		"Dinners 23-24 Nov",
+		planSnapshot([
+			{ name: "Mon 23 Nov dinner", dish: "Salmon soup", date: "2026-11-23", servings: 4 },
+		]),
+	);
+	const at = (day: number, hour: number, minute = 0) =>
+		new Date(2026, 10, day, hour, minute).getTime();
+	const poll = (now: number) => handleKindleRequest(get("/kindle/request"), now);
+
+	// Before the evening nothing is offered
+	expect((await poll(at(23, 15, 59))).status).toBe(204);
+
+	const first = await poll(at(23, 16, 30));
+	const handed = RequestJson.parse(await first.json());
+	expect(handed).toMatchObject({ recipe: "salmon-soup", servings: 4 });
+	expect(
+		(
+			await handleKindleRequest(
+				get(`/kindle/opened/${handed.id}`, { method: "POST" }),
+				at(23, 16, 31),
+			)
+		).status,
+	).toBe(204);
+	// Opened: later polls that evening get nothing more
+	expect((await poll(at(23, 18))).status).toBe(204);
+
+	// A recipe someone sends after it wins, and the dinner does not come back once that is opened
+	const chosen = await requestOpenOnKindle("salmon-soup", 2, at(23, 19));
+	expect(chosen).not.toBeNull();
+	await handleKindleRequest(get(`/kindle/opened/${chosen?.id}`, { method: "POST" }), at(23, 19, 1));
+	expect((await poll(at(23, 20))).status).toBe(204);
+
+	// No plan for the 24th, and after 21:00 nothing is sent
+	expect((await poll(at(24, 17))).status).toBe(204);
+	expect((await poll(at(23, 21, 30))).status).toBe(204);
+});
+
+test("tonight's dinner is offered again when the Kindle never fetched it", async () => {
+	const { savePlan } = await import("../plan-book.ts");
+	const { handleKindleRequest } = await import("./server.ts");
+	await savePlan(
+		"Dinner 25 Nov",
+		planSnapshot([{ name: "Wed 25 Nov dinner", dish: "Salmon soup", date: "2026-11-25" }]),
+	);
+	const at = (minute: number) => new Date(2026, 10, 25, 17, minute).getTime();
+	const first = RequestJson.parse(
+		await (await handleKindleRequest(get("/kindle/request"), at(0))).json(),
+	);
+	// Unopened, it expires after ten minutes; the next look gives a fresh request
+	const again = RequestJson.parse(
+		await (await handleKindleRequest(get("/kindle/request"), at(15))).json(),
+	);
+	expect(again.recipe).toBe("salmon-soup");
+	expect(again.id).not.toBe(first.id);
 });
 
 test("contract with the KOReader plugin: routes, status codes and answer shapes stay as they are", async () => {
