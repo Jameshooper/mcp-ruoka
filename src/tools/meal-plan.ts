@@ -527,24 +527,29 @@ export function registerMealPlanTool(server: McpServer): void {
 				saved = { id: plan.id, name: plan.name, replaced };
 			}
 
+			// The reply is read by the model on every later turn of the conversation, so it is sent
+			// compact and without each product's link (the saved plan keeps it): together that halves
+			// what a nine-dinner plan costs in context
+			const slimLines = (list: typeof output.toBuy) => ({
+				...list,
+				lines: list.lines.map(({ url: _url, ...line }) => line),
+			});
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: JSON.stringify(
-							{
-								...output,
-								...(lookupFailures > 0 && {
-									lookupFailures,
-									retryAdvice:
-										"Lookups failed (see missing). If the reason is HTTP 403 the chain is rate limiting this server: wait a few minutes and call again rather than retrying at once.",
-								}),
-								...(saved && { saved }),
-								...(saveBlocked && { saved: { skipped: true, reason: saveBlocked } }),
-							},
-							null,
-							2,
-						),
+						text: JSON.stringify({
+							...output,
+							toBuy: slimLines(output.toBuy),
+							pantry: slimLines(output.pantry),
+							...(lookupFailures > 0 && {
+								lookupFailures,
+								retryAdvice:
+									"Lookups failed (see missing). If the reason is HTTP 403 the chain is rate limiting this server: wait a few minutes and call again rather than retrying at once.",
+							}),
+							...(saved && { saved }),
+							...(saveBlocked && { saved: { skipped: true, reason: saveBlocked } }),
+						}),
 					},
 				],
 			};
