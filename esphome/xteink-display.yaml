@@ -1,0 +1,653 @@
+# Xteink X4 e-reader repurposed as a dinner-menu display for Home Assistant.
+# Hardware: ESP32-C3, 16 MB flash, 4.26" 800x480 GDEQ0426T82 panel (SSD1677),
+# 650 mAh battery. Shown in portrait (480x800), front buttons at the bottom.
+#
+# Pins (from CrossPoint Reader HAL / Adafruit X4 guide):
+#   EPD  SCK 8, MOSI 10, CS 21, DC 4, RST 5, BUSY 6
+#   Buttons: GPIO1 ladder (Right/Left/Confirm/Back), GPIO2 ladder (VolDown/VolUp),
+#            GPIO3 power button
+#   Battery: GPIO0 via 2x10k divider
+#   GPIO13: power latch -- must be held through deep sleep or the X4 cuts power.
+#
+# Shows the Ruoka app's sensor.ruoka_dinner_menu (Ruoka 0.29.0 or later): one day per page,
+# with the food picture Ruoka picks for the dish. Page 0 is tonight, or tomorrow from 20:00.
+# Front buttons, left to right:
+#   Back = previous day, Confirm = next day, Left = back to the first page,
+#   Right = Cook: sends the date on screen to the Kindle. Ruoka answers in
+#   sensor.ruoka_kindle, and again with "Opened on the Kindle" once the Kindle has it.
+#   Only the power button wakes the X4: GPIO1 drops to 0 V by itself in deep sleep, so a
+#   GPIO1 wake fired Cook every minute.
+#
+# The copy on the ESPHome instance is what runs; this file is kept in the Ruoka repo so the
+# sensor formats it reads and the app publishes change together.
+
+esphome:
+  name: xteink-display
+  friendly_name: Xteink Display
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          id(woke_by_timer) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
+      - wait_until:
+          condition:
+            api.connected:
+          timeout: 30s
+      # Night: timed wakes sleep straight through to 06:00 (a button press still works)
+      - if:
+          condition:
+            lambda: |-
+              auto now = id(ha_time).now();
+              return id(woke_by_timer) && now.is_valid() && now.hour >= 1 && now.hour < 6;
+          then:
+            - deep_sleep.enter:
+                id: deep_sleep_1
+                until: "06:00:00"
+                time_id: ha_time
+      # Draw (and take button presses) as soon as HA has pushed the whole menu, which is
+      # usually a second or two after connecting; give up waiting after 10 s
+      - wait_until:
+          condition:
+            lambda: "return !id(dinner_day_1).state.empty() && !id(dinner_day_7).state.empty();"
+          timeout: 10s
+      - component.update: battery_voltage
+      - delay: 200ms
+      - component.update: battery_level
+      - lambda: id(boot_complete) = true;
+      - component.update: epaper_display
+      - script.execute: sleep_timer
+  on_shutdown:
+    then:
+      # Keep the X4's power latch engaged through deep sleep
+      - lambda: |-
+          gpio_hold_en(GPIO_NUM_13);
+          gpio_deep_sleep_hold_en();
+
+esp32:
+  variant: esp32c3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret xteink_display_api_key
+
+ota:
+  - platform: esphome
+    on_begin:
+      then:
+        - deep_sleep.prevent: deep_sleep_1
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+  ap:
+    ssid: Xteink Display Fallback Hotspot
+    password: !secret xteink_display_ap_password
+
+captive_portal:
+
+# Deep-sleep boots are short; don't count them as failed boots
+safe_mode:
+  boot_is_good_after: 10s
+
+globals:
+  - id: page_index
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: boot_complete
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: woke_by_timer
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  # The day on screen as Ruoka labels it ("Mon 16 Nov") and as a date ("2026-11-16"), set when
+  # the screen is drawn
+  - id: shown_label
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: shown_date
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  # The day Cook sent, so an answer for anything else (the app's own "Open on Kindle", an older
+  # press) is not shown. Cleared with the message.
+  - id: cook_date
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  # Cook feedback shown at the bottom of the screen
+  - id: kindle_msg
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: kindle_waiting
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+# Night sleep and the 20:00 switch to tomorrow; not shown
+time:
+  - platform: homeassistant
+    id: ha_time
+
+deep_sleep:
+  id: deep_sleep_1
+  run_duration: 90s
+  sleep_duration: 30min
+  wakeup_pin:
+    number: GPIO3
+    inverted: true
+    allow_other_uses: true
+
+script:
+  # Stay awake briefly so the buttons can flip pages, then go back to the first page and sleep.
+  - id: sleep_timer
+    mode: restart
+    then:
+      - delay: 20s
+      - if:
+          condition:
+            lambda: "return id(page_index) != 0 || !id(kindle_msg).empty();"
+          then:
+            - lambda: |-
+                id(page_index) = 0;
+                id(kindle_msg) = "";
+                id(cook_date) = "";
+            - component.update: epaper_display
+            - delay: 3s
+      - deep_sleep.enter: deep_sleep_1
+
+  - id: change_page
+    mode: queued
+    parameters:
+      delta: int
+    then:
+      - lambda: |-
+          if (!id(boot_complete)) return;
+          auto now = id(ha_time).now();
+          const int n = (now.is_valid() && now.hour >= 20) ? 6 : 7;
+          id(kindle_msg) = "";
+          id(cook_date) = "";
+          if (delta == 0) id(page_index) = 0;
+          else id(page_index) = (id(page_index) + delta + n) % n;
+      - component.update: epaper_display
+      - script.execute: sleep_timer
+
+  # Ask Ruoka (via the HA automation "X4: Cook sends the recipe to the Kindle", which passes
+  # `day` through unchanged) to send the day on screen to the Kindle, and show its answer
+  - id: cook
+    mode: single
+    then:
+      - script.stop: sleep_timer
+      - if:
+          condition:
+            not:
+              api.connected:
+          then:
+            - lambda: 'id(kindle_msg) = "Not connected to Home Assistant";'
+            - component.update: epaper_display
+          else:
+            # Draw once first so shown_date is the day on screen
+            - lambda: |-
+                id(kindle_msg) = "Sending to the Kindle...";
+                id(kindle_waiting) = true;
+            - component.update: epaper_display
+            # The date, so Ruoka never guesses the year from a label; the label only if the
+            # menu carried no date
+            - lambda: |-
+                id(cook_date) = id(shown_date).empty() ? id(shown_label) : id(shown_date);
+            - homeassistant.event:
+                event: esphome.xteink_cook
+                data:
+                  day: !lambda "return id(cook_date);"
+            - delay: 4s
+            - wait_until:
+                condition:
+                  lambda: "return !id(kindle_waiting);"
+                timeout: 15s
+            - lambda: |-
+                if (id(kindle_waiting)) {
+                  id(kindle_waiting) = false;
+                  id(kindle_msg) = "No answer from Ruoka";
+                }
+            - component.update: epaper_display
+      - delay: 3s
+      - script.execute: sleep_timer
+
+spi:
+  clk_pin: GPIO8
+  mosi_pin: GPIO10
+
+sensor:
+  - platform: adc
+    pin: GPIO0
+    id: battery_voltage
+    name: "Battery Voltage"
+    attenuation: 12db
+    update_interval: never
+    filters:
+      - multiply: 2.0
+
+  - platform: template
+    id: battery_level
+    name: "Battery Level"
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    update_interval: never
+    lambda: "return id(battery_voltage).state;"
+    filters:
+      - calibrate_linear:
+          - 4.15 -> 100.0
+          - 3.96 -> 90.0
+          - 3.91 -> 80.0
+          - 3.85 -> 70.0
+          - 3.80 -> 60.0
+          - 3.75 -> 50.0
+          - 3.68 -> 40.0
+          - 3.58 -> 30.0
+          - 3.49 -> 20.0
+          - 3.41 -> 10.0
+          - 3.30 -> 5.0
+          - 3.27 -> 0.0
+      - clamp:
+          min_value: 0
+          max_value: 100
+
+  # Front-button resistor ladders (volts)
+  - platform: adc
+    pin: GPIO1
+    id: button_row1
+    internal: true
+    attenuation: 12db
+    update_interval: 50ms
+
+  - platform: adc
+    pin: GPIO2
+    id: button_row2
+    internal: true
+    attenuation: 12db
+    update_interval: 50ms
+
+text_sensor:
+  # Ruoka app: day_1_full..day_7_full = "2026-11-16~Mon 16 Nov~pot~Salmon soup"
+  # (date~label~picture~dish; day_1 = today; "-" dish and "none" picture = nothing planned)
+  - platform: homeassistant
+    id: dinner_day_1
+    entity_id: sensor.ruoka_dinner_menu
+    attribute: day_1_full
+    internal: true
+  - platform: homeassistant
+    id: dinner_day_2
+    entity_id: sensor.ruoka_dinner_menu
+    attribute: day_2_full
+    internal: true
+  - platform: homeassistant
+    id: dinner_day_3
+    entity_id: sensor.ruoka_dinner_menu
+    attribute: day_3_full
+    internal: true
+  - platform: homeassistant
+    id: dinner_day_4
+    entity_id: sensor.ruoka_dinner_menu
+    attribute: day_4_full
+    internal: true
+  - platform: homeassistant
+    id: dinner_day_5
+    entity_id: sensor.ruoka_dinner_menu
+    attribute: day_5_full
+    internal: true
+  - platform: homeassistant
+    id: dinner_day_6
+    entity_id: sensor.ruoka_dinner_menu
+    attribute: day_6_full
+    internal: true
+  - platform: homeassistant
+    id: dinner_day_7
+    entity_id: sensor.ruoka_dinner_menu
+    attribute: day_7_full
+    internal: true
+  # Ruoka's answer to Cook: "<message>~<date>~<time>", e.g. "Sent to the Kindle~2026-11-16~...",
+  # then "Opened on the Kindle~2026-11-16~..." when the Kindle has the recipe. The date is "-"
+  # when Ruoka did not understand the day.
+  - platform: homeassistant
+    id: kindle_answer
+    entity_id: sensor.ruoka_kindle
+    internal: true
+    on_value:
+      - lambda: |-
+          if (id(cook_date).empty()) return;
+          size_t a = x.find('~');
+          std::string msg = a == std::string::npos ? x : x.substr(0, a);
+          size_t b = a == std::string::npos ? a : x.find('~', a + 1);
+          std::string date = b == std::string::npos ? "" : x.substr(a + 1, b - a - 1);
+          // Ruoka before 0.29.0 sends no date; "-" answers a day it could not read
+          if (!date.empty() && date != "-" && date != id(cook_date)) return;
+          id(kindle_msg) = msg;
+          if (id(kindle_waiting)) {
+            id(kindle_waiting) = false;
+            return;
+          }
+          // A later answer for the same press ("Opened on the Kindle"): show it now
+          id(epaper_display).update();
+
+binary_sensor:
+  # Power button: wake / back to the first page
+  - platform: gpio
+    id: button_power
+    pin:
+      number: GPIO3
+      mode: INPUT_PULLUP
+      inverted: true
+      allow_other_uses: true
+    on_press:
+      - script.execute:
+          id: change_page
+          delta: 0
+
+  # Row 1 ladder: Right ~0V, Left ~1.11V, Confirm ~1.98V, Back ~2.56V
+  - platform: template
+    id: button_right
+    lambda: "return id(button_row1).state < 0.15;"
+    filters:
+      - delayed_on: 60ms
+    on_press:
+      - if:
+          condition:
+            lambda: "return id(boot_complete);"
+          then:
+            - script.execute: cook
+  - platform: template
+    id: button_left
+    lambda: "return id(button_row1).state > 0.96 && id(button_row1).state < 1.26;"
+    filters:
+      - delayed_on: 60ms
+    on_press:
+      - script.execute:
+          id: change_page
+          delta: 0
+  - platform: template
+    id: button_confirm
+    lambda: "return id(button_row1).state > 1.83 && id(button_row1).state < 2.13;"
+    filters:
+      - delayed_on: 60ms
+    on_press:
+      - script.execute:
+          id: change_page
+          delta: 1
+  - platform: template
+    id: button_back
+    lambda: "return id(button_row1).state > 2.40 && id(button_row1).state < 2.71;"
+    filters:
+      - delayed_on: 60ms
+    on_press:
+      - script.execute:
+          id: change_page
+          delta: -1
+
+  # Row 2 ladder (side rocker): VolDown ~0V, VolUp ~1.66V
+  - platform: template
+    id: button_vol_down
+    lambda: "return id(button_row2).state < 0.15;"
+    filters:
+      - delayed_on: 60ms
+    on_press:
+      - script.execute:
+          id: change_page
+          delta: 1
+  - platform: template
+    id: button_vol_up
+    lambda: "return id(button_row2).state > 1.51 && id(button_row2).state < 1.81;"
+    filters:
+      - delayed_on: 60ms
+    on_press:
+      - script.execute:
+          id: change_page
+          delta: -1
+
+font:
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 700
+    id: font_head
+    size: 64
+    glyphs: &glyphs
+      - " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+      - "äöåÄÖÅéèüÜ°–—’"
+  - file: "gfonts://Roboto"
+    id: font_sub
+    size: 34
+    glyphs: *glyphs
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 700
+    id: font_dish
+    size: 54
+    glyphs: *glyphs
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 700
+    id: font_dish_small
+    size: 40
+    glyphs: *glyphs
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 20
+    glyphs: *glyphs
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 700
+    id: font_label
+    size: 26
+    glyphs: *glyphs
+
+# Food pictures (Material Design Icons). Ruoka names which one in each day's entry; the ids are
+# "icon_" plus that name (src/home-assistant/dish-icon.ts in the Ruoka repo).
+image:
+  - platform: file
+    defaults:
+      type: binary
+      transparency: chroma_key
+      resize: 150x150
+    files:
+      - file: mdi:food-drumstick
+        id: icon_chicken
+      - file: mdi:fish
+        id: icon_fish
+      - file: mdi:pot-steam
+        id: icon_pot
+      - file: mdi:pasta
+        id: icon_pasta
+      - file: mdi:pizza
+        id: icon_pizza
+      - file: mdi:taco
+        id: icon_taco
+      - file: mdi:hamburger
+        id: icon_burger
+      - file: mdi:rice
+        id: icon_rice
+      - file: mdi:food-steak
+        id: icon_steak
+      - file: mdi:noodles
+        id: icon_noodles
+      - file: mdi:egg-fried
+        id: icon_egg
+      - file: mdi:carrot
+        id: icon_veg
+      - file: mdi:silverware-fork-knife
+        id: icon_dinner
+
+display:
+  - platform: epaper_spi
+    id: epaper_display
+    model: Waveshare-4.26in
+    cs_pin: GPIO21
+    dc_pin: GPIO4
+    reset_pin: GPIO5
+    busy_pin: GPIO6
+    rotation: 90
+    update_interval: never
+    lambda: |-
+      const int W = it.get_width();   // 480
+      const int H = it.get_height();  // 800
+      it.fill(COLOR_OFF);
+
+      auto text_w = [&](display::BaseFont *f, const std::string &s) -> int {
+        int x1, y1, w, h;
+        it.get_text_bounds(0, 0, s.c_str(), f, TextAlign::TOP_LEFT, &x1, &y1, &w, &h);
+        return w;
+      };
+      auto drop_last_char = [](std::string &s) {
+        while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80) s.pop_back();
+        if (!s.empty()) s.pop_back();
+      };
+      // Shorten to fit max_w, adding "..."
+      auto fit = [&](display::BaseFont *f, std::string s, int max_w) -> std::string {
+        if (text_w(f, s) <= max_w) return s;
+        while (!s.empty()) {
+          drop_last_char(s);
+          if (text_w(f, s + "...") <= max_w) return s + "...";
+        }
+        return s;
+      };
+      // Word-wrap into at most max_lines lines; the last line takes whatever is left, shortened
+      auto wrap_lines = [&](display::BaseFont *f, const std::string &s, int max_w, int max_lines) -> std::vector<std::string> {
+        std::vector<std::string> words, lines;
+        std::string w;
+        for (char ch : s) {
+          if (ch == ' ') { if (!w.empty()) words.push_back(w); w.clear(); }
+          else w += ch;
+        }
+        if (!w.empty()) words.push_back(w);
+        std::string line;
+        for (size_t i = 0; i < words.size(); i++) {
+          std::string cand = line.empty() ? words[i] : line + " " + words[i];
+          if (line.empty() || text_w(f, cand) <= max_w) { line = cand; continue; }
+          if ((int) lines.size() == max_lines - 1) {
+            for (size_t j = i; j < words.size(); j++) line += " " + words[j];
+            break;
+          }
+          lines.push_back(fit(f, line, max_w));
+          line = words[i];
+        }
+        if (!line.empty()) lines.push_back(fit(f, line, max_w));
+        return lines;
+      };
+
+      // ---- This page's day: "2026-11-16~Mon 16 Nov~pot~Salmon soup". From 20:00 the pages start at tomorrow ----
+      std::string days[7] = {
+        id(dinner_day_1).state, id(dinner_day_2).state, id(dinner_day_3).state, id(dinner_day_4).state,
+        id(dinner_day_5).state, id(dinner_day_6).state, id(dinner_day_7).state
+      };
+      auto now = id(ha_time).now();
+      const int base = (now.is_valid() && now.hour >= 20) ? 1 : 0;
+      const int pages = 7 - base;
+      int page = id(page_index);
+      if (page >= pages) page = 0;
+      const int d = base + page;
+      std::string entry = days[d];
+      std::string date, label, icon, dish;
+      // The dish is last, so a ~ inside it stays part of the dish
+      size_t t1 = entry.find('~');
+      size_t t2 = t1 == std::string::npos ? t1 : entry.find('~', t1 + 1);
+      size_t t3 = t2 == std::string::npos ? t2 : entry.find('~', t2 + 1);
+      const bool have = t3 != std::string::npos;
+      if (have) {
+        date = entry.substr(0, t1);
+        label = entry.substr(t1 + 1, t2 - t1 - 1);
+        icon = entry.substr(t2 + 1, t3 - t2 - 1);
+        dish = entry.substr(t3 + 1);
+      }
+      const bool planned = have && !dish.empty() && dish != "-";
+      if (!have) dish = "Waiting for Home Assistant";
+      else if (!planned) dish = "Nothing planned";
+      id(shown_label) = label;
+      id(shown_date) = date;
+
+      // "Mon 16 Nov" -> weekday "Monday", date "16 Nov"
+      static const char *abbr[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+      static const char *full[] = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
+      size_t sp = label.find(' ');
+      std::string wd = (sp == std::string::npos) ? label : label.substr(0, sp);
+      std::string day_month = (sp == std::string::npos) ? "" : label.substr(sp + 1);
+      for (int i = 0; i < 7; i++) if (wd == abbr[i]) wd = full[i];
+
+      std::string head = d == 0 ? "Tonight" : d == 1 ? "Tomorrow" : (wd.empty() ? "Dinner" : wd);
+      std::string sub = d < 2 ? (wd + " " + day_month) : day_month;
+
+      it.print(W / 2, 40, id(font_head), COLOR_ON, TextAlign::TOP_CENTER, head.c_str());
+      it.print(W / 2, 118, id(font_sub), COLOR_ON, TextAlign::TOP_CENTER, sub.c_str());
+      it.filled_rectangle(40, 180, W - 80, 4, COLOR_ON);
+      if (!std::isnan(id(battery_level).state)) {
+        it.printf(W - 10, 10, id(font_small), COLOR_ON, TextAlign::TOP_RIGHT, "%.0f%%", id(battery_level).state);
+      }
+
+      // ---- The food picture Ruoka chose for the dish ----
+      int top = 200;
+      if (planned) {
+        image::Image *pic = id(icon_dinner);
+        if (icon == "pizza") pic = id(icon_pizza);
+        else if (icon == "taco") pic = id(icon_taco);
+        else if (icon == "burger") pic = id(icon_burger);
+        else if (icon == "pot") pic = id(icon_pot);
+        else if (icon == "pasta") pic = id(icon_pasta);
+        else if (icon == "noodles") pic = id(icon_noodles);
+        else if (icon == "fish") pic = id(icon_fish);
+        else if (icon == "chicken") pic = id(icon_chicken);
+        else if (icon == "steak") pic = id(icon_steak);
+        else if (icon == "egg") pic = id(icon_egg);
+        else if (icon == "rice") pic = id(icon_rice);
+        else if (icon == "veg") pic = id(icon_veg);
+        it.image(W / 2 - 75, 200, pic, COLOR_ON, COLOR_OFF);
+        top = 360;
+      }
+
+      // ---- The dish, big and centred; smaller type if it's long ----
+      const int bottom = H - 160;
+      display::BaseFont *f = id(font_dish);
+      int line_h = 66;
+      std::vector<std::string> lines = wrap_lines(f, dish, W - 40, 99);
+      if ((int) lines.size() * line_h > bottom - top) {
+        f = id(font_dish_small);
+        line_h = 50;
+        lines = wrap_lines(f, dish, W - 40, (bottom - top) / 50);
+      }
+      int y = top + ((bottom - top) - (int) lines.size() * line_h) / 2;
+      for (auto &l : lines) {
+        it.print(W / 2, y, f, COLOR_ON, TextAlign::TOP_CENTER, l.c_str());
+        y += line_h;
+      }
+
+      // ---- Cook's answer, or which day of the week this is ----
+      if (!id(kindle_msg).empty()) {
+        it.rectangle(20, H - 150, W - 40, 60, COLOR_ON);
+        it.rectangle(21, H - 149, W - 42, 58, COLOR_ON);
+        std::string m = fit(id(font_label), id(kindle_msg), W - 60);
+        it.print(W / 2, H - 120, id(font_label), COLOR_ON, TextAlign::CENTER, m.c_str());
+      } else {
+        for (int i = 0; i < pages; i++) {
+          int dx = W / 2 - (pages - 1) * 10 + i * 20;
+          if (i == page) it.filled_circle(dx, H - 115, 6, COLOR_ON);
+          else it.circle(dx, H - 115, 6, COLOR_ON);
+        }
+      }
+
+      // ---- What the front buttons below do (Back, Confirm, Left, Right) ----
+      it.filled_rectangle(20, H - 66, W - 40, 2, COLOR_ON);
+      static const char *hints[] = {"Prev", "Next", "Today", "Cook"};
+      static const int hint_x[] = {92, 186, 294, 388};
+      for (int i = 0; i < 4; i++)
+        it.print(hint_x[i], H - 34, id(font_label), COLOR_ON, TextAlign::CENTER, hints[i]);
