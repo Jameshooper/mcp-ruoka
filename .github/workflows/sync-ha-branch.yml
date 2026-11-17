@@ -1,0 +1,43 @@
+name: Sync the Home Assistant branch
+
+# The Home Assistant app store entry follows claude/tender-einstein-qhzpmc, not main
+# (https://github.com/Jameshooper/mcp-ruoka#claude/tender-einstein-qhzpmc), and the Supervisor
+# will not drop a store entry while an app from it is installed. Moving the app to main would
+# mean reinstalling it and losing its data, so main is merged into that branch instead, after
+# every push. The branch differs from main only in its Dockerfile, which clones the branch itself.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-ha-branch
+  cancel-in-progress: false
+
+env:
+  HA_BRANCH: claude/tender-einstein-qhzpmc
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.HA_BRANCH }}
+          fetch-depth: 0
+      - name: Merge main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
+          # Anything but the Dockerfile's RUOKA_REF line would mean the branch has drifted
+          extra="$(git diff --name-only origin/main HEAD | grep -vx 'ruoka/Dockerfile' || true)"
+          if [ -n "$extra" ]; then
+            echo "::error::$HA_BRANCH differs from main in more than its Dockerfile: $extra"
+            exit 1
+          fi
+          git push origin "HEAD:$HA_BRANCH"
