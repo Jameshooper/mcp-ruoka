@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
-import { runCommand, startHomeAssistantCommands, takeCommands } from "./ha-commands.ts";
+import {
+	answerWhenOpened,
+	runCommand,
+	startHomeAssistantCommands,
+	takeCommands,
+} from "./commands.ts";
 
 test("reads one command per line, and a last one without a newline", () => {
 	expect(takeCommands('{"a":1}\n{"b":2}\n{"c"')).toEqual({
@@ -29,7 +34,9 @@ test("answers through a sensor, with the time keeping every answer a new state",
 	expect(message).toBe("Unknown day");
 	expect(calls[0]?.url).toBe("http://supervisor/core/api/states/sensor.ruoka_kindle");
 	const body = JSON.parse(calls[0]?.body ?? "{}");
-	expect(body.state).toBe(`Unknown day~${now}`);
+	// "<message>~<date>~<time>": old firmware reads up to the first ~, so it still gets the message
+	expect(body.state).toBe(`Unknown day~-~${now}`);
+	expect(body.attributes.date).toBeNull();
 	expect(body.attributes.sent).toBe(false);
 
 	expect(await runCommand({ reboot: true }, { now, fetchFn, token: "tok" })).toBeNull();
@@ -43,4 +50,33 @@ test("does not listen outside Home Assistant", () => {
 	startHomeAssistantCommands(input);
 	expect(input.listenerCount("data")).toBe(0);
 	if (saved !== undefined) process.env.SUPERVISOR_TOKEN = saved;
+});
+
+test("tells the display when the Kindle has opened what it sent, and only for its own sends", async () => {
+	const { outbox } = await import("../kindle/outbox.ts");
+	outbox.reset();
+	const states: string[] = [];
+	const fetchFn = Object.assign(
+		async (_input: Request | URL | string, init?: RequestInit) => {
+			states.push(JSON.parse(String(init?.body)).state);
+			return new Response("{}", { status: 201 });
+		},
+		{ preconnect: () => {} },
+	);
+	const stop = answerWhenOpened({ fetchFn, token: "tok" });
+	const book = new Uint8Array([1]);
+	const item = { key: "salmon-soup", name: "Salmon soup", servings: 4, book };
+
+	const fromApp = outbox.send(item, { from: "app" }, 1000);
+	outbox.markOpened(fromApp.id, 2000);
+	expect(states).toEqual([]);
+
+	const fromDisplay = outbox.send(item, { from: "home-assistant", date: "2026-11-17" }, 3000);
+	outbox.markOpened(fromDisplay.id, 4000);
+	// A retried "opened" from the Kindle is not a second answer
+	outbox.markOpened(fromDisplay.id, 5000);
+	await Bun.sleep(0);
+	expect(states).toEqual(["Opened on the Kindle~2026-11-17~4000"]);
+	stop();
+	outbox.reset();
 });

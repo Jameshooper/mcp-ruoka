@@ -1,10 +1,17 @@
 import { expect, test } from "bun:test";
-import { buildMenu, mealDate, menuState, publishDinnerMenu } from "./dinner-menu.ts";
-import type { MealPlan } from "./plan-book.ts";
+import { buildMenu, mealDate } from "../dinners.ts";
+import type { MealPlan } from "../plan-book.ts";
+import { menuState, publishDinnerMenu } from "./dinner-menu.ts";
 
 function plan(
 	name: string,
-	meals: Array<{ name: string; dish?: string; date?: string; recipe?: string }>,
+	meals: Array<{
+		name: string;
+		dish?: string;
+		date?: string;
+		recipe?: string;
+		protein?: "fish" | "white_meat" | "red_meat" | "vegetarian" | "other";
+	}>,
 	createdAt = "2026-11-14T10:00:00.000Z",
 	updatedAt = createdAt,
 ): MealPlan {
@@ -68,6 +75,7 @@ test("builds seven days from today, with gaps where nothing is planned", () => {
 		dish: null,
 		recipe: null,
 		plan: null,
+		protein: null,
 	});
 	expect(menu[3]).toEqual({
 		date: "2026-11-18",
@@ -75,6 +83,7 @@ test("builds seven days from today, with gaps where nothing is planned", () => {
 		dish: "Salmon soup",
 		recipe: "salmon-soup",
 		plan: "Family plan 18 Nov - 26 Nov",
+		protein: null,
 	});
 	expect(menu[4]?.dish).toBe("Tacos");
 });
@@ -110,6 +119,8 @@ test("flattens the menu into day attributes and puts tonight in the state", () =
 	expect(attributes.day_1).toBe("Sun 15 Nov~Curry");
 	expect(attributes.day_2).toBe("Mon 16 Nov~-");
 	expect(attributes.day_7).toBe("Sat 21 Nov~-");
+	expect(attributes.day_1_full).toBe("2026-11-15~Sun 15 Nov~rice~Curry");
+	expect(attributes.day_2_full).toBe("2026-11-16~Mon 16 Nov~none~-");
 	expect(menuState(buildMenu([], new Date(2026, 10, 15))).state).toBe("Nothing planned");
 });
 
@@ -127,6 +138,7 @@ test("posts the sensor to Home Assistant through the Supervisor", async () => {
 		token: "tok",
 		now: new Date(2026, 10, 15),
 		plans: [plan("P", [{ name: "Sun 15 Nov dinner", dish: "Curry" }])],
+		recipes: [],
 		fetchFn: Object.assign(fetchFn, { preconnect: () => {} }),
 	});
 	expect(result).toEqual({ ok: true });
@@ -140,4 +152,55 @@ test("does nothing outside Home Assistant", async () => {
 		ok: false,
 		error: "Not running inside Home Assistant",
 	});
+});
+
+test("the display's food picture comes from the dish, then the meal's protein", () => {
+	const menu = buildMenu(
+		[
+			plan("P", [
+				{ name: "Sun 15 Nov dinner", dish: "Thai green curry", protein: "white_meat" },
+				{ name: "Mon 16 Nov dinner", dish: "Salmon soup", protein: "fish" },
+				{ name: "Tue 17 Nov dinner", dish: "Thai green curry" },
+			]),
+		],
+		new Date(2026, 10, 15),
+	);
+	const { attributes } = menuState(menu);
+	// The tag fills in for a name that doesn't say what is in it
+	expect(attributes.day_1_full).toBe("2026-11-15~Sun 15 Nov~chicken~Thai green curry");
+	// What the dish is shaped like beats what is in it
+	expect(attributes.day_2_full).toBe("2026-11-16~Mon 16 Nov~pot~Salmon soup");
+	expect(attributes.day_3_full).toBe("2026-11-17~Tue 17 Nov~rice~Thai green curry");
+});
+
+test("a meal planned from a saved recipe takes the recipe's protein for its picture", async () => {
+	const bodies: string[] = [];
+	const fetchFn = Object.assign(
+		async (_input: Request | URL | string, init?: RequestInit) => {
+			bodies.push(String(init?.body));
+			return new Response("{}", { status: 201 });
+		},
+		{ preconnect: () => {} },
+	);
+	await publishDinnerMenu({
+		token: "tok",
+		now: new Date(2026, 10, 15),
+		plans: [plan("P", [{ name: "Sun 15 Nov dinner", dish: "Green curry", recipe: "green-curry" }])],
+		recipes: [
+			{
+				id: "green-curry",
+				name: "Green curry",
+				servings: 4,
+				ingredients: [],
+				steps: ["Cook"],
+				tags: [],
+				protein: "red_meat",
+				createdAt: created,
+				updatedAt: created,
+			},
+		],
+		fetchFn,
+	});
+	const sent = JSON.parse(bodies[0] ?? "{}");
+	expect(sent.attributes.day_1_full).toBe("2026-11-15~Sun 15 Nov~steak~Green curry");
 });
