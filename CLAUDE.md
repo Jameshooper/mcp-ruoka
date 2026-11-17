@@ -20,3 +20,5 @@ MCP server for Finnish grocery and alcohol product search across K-Ruoka (k-ruok
 - Comments should explain *why*, not *what* — no section dividers, no restating what the code does
 - Browser context is reused across calls — don't create new contexts per request
 - Keep chain-specific browser/API logic (`src/browser/`) isolated from MCP tool definitions (`src/tools/`)
+- Kindle code (`src/kindle/`) and Home Assistant code (`src/home-assistant/`) stay apart; both build on `src/dinners.ts` for which dinner is on which day
+- The Kindle's HTTP routes (`src/kindle/server.ts`) are a contract with the KOReader plugin, which is only updated by copying files to the Kindle by hand — extend answers, never rename or remove; bump `PLUGIN_VERSION` in `kindle/ruoka.koplugin/main.lua` with every plugin change

@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { buildCookbook, buildRecipeBook, escapeXml, formatQuantity } from "./cookbook.ts";
-import type { MealPlan } from "./plan-book.ts";
-import type { Recipe } from "./recipe-book.ts";
-import { unzipFiles } from "./zip.ts";
+import type { MealPlan } from "../plan-book.ts";
+import type { Recipe } from "../recipe-book.ts";
+import { unzipFiles } from "../zip.ts";
+import { buildCookbook, buildRecipeBook, formatQuantity } from "./cookbook.ts";
+import { escapeXml } from "./epub.ts";
 
 const DECODER = new TextDecoder();
 
@@ -115,7 +116,7 @@ test("builds a valid EPUB: mimetype first and uncompressed, every link resolves"
 });
 
 // KOReader uses the cover as the Kindle's sleep screen, found through the package metadata
-test("the cookbook has a cover image; a single recipe book does not", () => {
+test("every book has the cover image, a single recipe as well as the cookbook", () => {
 	const files = unzipFiles(buildCookbook([recipe("chili", "Bean chili")], [], today));
 	const opf = DECODER.decode(files.get("OEBPS/content.opf"));
 	expect(opf).toContain(
@@ -128,9 +129,12 @@ test("the cookbook has a cover image; a single recipe book does not", () => {
 	const header = new DataView(png.buffer, png.byteOffset);
 	expect([header.getUint32(16), header.getUint32(20)]).toEqual([1072, 1448]);
 
+	// KOReader shows the last book opened while the Kindle sleeps, and after Cook that is the recipe
 	const single = unzipFiles(buildRecipeBook(recipe("chili", "Bean chili")));
-	expect(single.has("OEBPS/cover.png")).toBe(false);
-	expect(DECODER.decode(single.get("OEBPS/content.opf"))).not.toContain("cover-image");
+	expect(single.has("OEBPS/cover.png")).toBe(true);
+	expect(DECODER.decode(single.get("OEBPS/content.opf"))).toContain(
+		'<meta name="cover" content="cover-image"/>',
+	);
 });
 
 test("a recipe page splits what to buy from cupboard staples and escapes text", () => {
@@ -223,4 +227,19 @@ test("a single-recipe book opens straight on the recipe", () => {
 	const files = read(buildRecipeBook(recipe("a", "Salmon soup")));
 	expect(files.get("OEBPS/content.opf")).toContain('<itemref idref="p0"/></spine>');
 	expect(files.get("OEBPS/recipe.xhtml")).toContain("<h1>Salmon soup</h1>");
+});
+
+test("emoji are left out of every book, since the Kindle's fonts would show empty boxes", () => {
+	const files = read(
+		buildRecipeBook(
+			recipe("tacos", "Fish tacos 🌮🔥", {
+				steps: ["Warm the tortillas 🫓", "Serve with lime 🍋‍🟩 © Ruoka"],
+			}),
+		),
+	);
+	const page = files.get("OEBPS/recipe.xhtml") ?? "";
+	expect(page).toContain("Fish tacos");
+	expect(page).not.toMatch(/\p{Extended_Pictographic}(?<![©®™])/u);
+	expect(page).toContain("Serve with lime © Ruoka");
+	expect(files.get("OEBPS/toc.ncx")).not.toContain("🌮");
 });

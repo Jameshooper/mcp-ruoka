@@ -9,7 +9,7 @@ let dir = "";
 beforeAll(async () => {
 	dir = await mkdtemp(join(tmpdir(), "ruoka-kindle-"));
 	process.env.RUOKA_DATA_DIR = dir;
-	const { saveRecipe } = await import("./recipe-book.ts");
+	const { saveRecipe } = await import("../recipe-book.ts");
 	await saveRecipe({
 		name: "Salmon soup",
 		servings: 8,
@@ -24,7 +24,7 @@ afterAll(async () => {
 	await rm(dir, { recursive: true, force: true });
 });
 beforeEach(async () => {
-	const { resetKindleState } = await import("./kindle.ts");
+	const { resetKindleState } = await import("./send.ts");
 	resetKindleState();
 });
 
@@ -42,7 +42,7 @@ const StatusJson = z.object({
 const get = (path: string, init?: RequestInit) => new Request(`http://kindle${path}`, init);
 
 test("serves the cookbook with an ETag and answers 304 when nothing changed", async () => {
-	const { handleKindleRequest } = await import("./kindle.ts");
+	const { handleKindleRequest } = await import("./server.ts");
 	const first = await handleKindleRequest(get("/cookbook.epub"));
 	expect(first.status).toBe(200);
 	expect(first.headers.get("content-type")).toBe("application/epub+zip");
@@ -61,8 +61,8 @@ test("serves the cookbook with an ETag and answers 304 when nothing changed", as
 });
 
 test("open on Kindle: the request is picked up, served scaled, then marked opened", async () => {
-	const { handleKindleRequest } = await import("./kindle.ts");
-	const { handleUiRequest } = await import("./ui-server.ts");
+	const { handleKindleRequest } = await import("./server.ts");
+	const { handleUiRequest } = await import("../ui-server.ts");
 
 	expect((await handleKindleRequest(get("/kindle/request"))).status).toBe(204);
 
@@ -82,7 +82,7 @@ test("open on Kindle: the request is picked up, served scaled, then marked opene
 
 	const book = await handleKindleRequest(get(request.url));
 	expect(book.status).toBe(200);
-	const { unzipFiles } = await import("./zip.ts");
+	const { unzipFiles } = await import("../zip.ts");
 	const files = unzipFiles(new Uint8Array(await book.arrayBuffer()));
 	const page = new TextDecoder().decode(files.get("OEBPS/recipe.xhtml"));
 	expect(page).toContain("Serves 4");
@@ -100,7 +100,8 @@ test("open on Kindle: the request is picked up, served scaled, then marked opene
 });
 
 test("a request nobody picks up expires", async () => {
-	const { handleKindleRequest, requestOpenOnKindle } = await import("./kindle.ts");
+	const { handleKindleRequest } = await import("./server.ts");
+	const { requestOpenOnKindle } = await import("./send.ts");
 	const sentAt = Date.now();
 	await requestOpenOnKindle("salmon-soup", undefined, sentAt);
 	expect((await handleKindleRequest(get("/kindle/request"), sentAt + 60_000)).status).toBe(200);
@@ -110,7 +111,8 @@ test("a request nobody picks up expires", async () => {
 });
 
 test("the home-network listener serves nothing else", async () => {
-	const { handleKindleRequest, requestOpenOnKindle } = await import("./kindle.ts");
+	const { handleKindleRequest } = await import("./server.ts");
+	const { requestOpenOnKindle } = await import("./send.ts");
 	await requestOpenOnKindle("salmon-soup", undefined);
 	for (const path of [
 		"/",
@@ -128,7 +130,7 @@ test("the home-network listener serves nothing else", async () => {
 });
 
 test("the app refuses unknown recipes and requests without JSON", async () => {
-	const { handleUiRequest } = await import("./ui-server.ts");
+	const { handleUiRequest } = await import("../ui-server.ts");
 	const missing = await handleUiRequest(
 		new Request("http://x/api/kindle/open", {
 			method: "POST",
@@ -160,8 +162,9 @@ function planSnapshot(meals: Array<Record<string, unknown>>) {
 }
 
 test("the dinner-menu display sends the evening it shows", async () => {
-	const { savePlan } = await import("./plan-book.ts");
-	const { handleKindleRequest, requestOpenDinner } = await import("./kindle.ts");
+	const { savePlan } = await import("../plan-book.ts");
+	const { handleKindleRequest } = await import("./server.ts");
+	const { requestOpenDinner } = await import("./send.ts");
 	await savePlan(
 		"Dinners 16-17 Nov",
 		planSnapshot([
@@ -196,15 +199,99 @@ test("the dinner-menu display sends the evening it shows", async () => {
 	// asked, so it counts as listening
 	const tomorrow = await requestOpenDinner("2026-11-17", now);
 	expect(tomorrow).toMatchObject({ ok: true, message: "Sent to the Kindle" });
-	if (tomorrow.ok) expect(tomorrow.request).toMatchObject({ recipe: "salmon-soup", servings: 4 });
+	if (tomorrow.ok) {
+		expect(tomorrow.request).toMatchObject({ key: "salmon-soup", servings: 4 });
+		expect(tomorrow.request.origin).toEqual({ from: "home-assistant", date: "2026-11-17" });
+	}
 
 	expect(await requestOpenDinner("Wed 18 Nov", now)).toEqual({
 		ok: false,
 		message: "No recipe for Wed 18 Nov",
+		date: "2026-11-18",
 	});
 	expect(await requestOpenDinner("Thu 19 Nov", now)).toEqual({
 		ok: false,
 		message: "Nothing planned for Thu 19 Nov",
+		date: "2026-11-19",
 	});
-	expect(await requestOpenDinner("someday", now)).toEqual({ ok: false, message: "Unknown day" });
+	expect(await requestOpenDinner("someday", now)).toEqual({
+		ok: false,
+		message: "Unknown day",
+		date: null,
+	});
+});
+
+test("contract with the KOReader plugin: routes, status codes and answer shapes stay as they are", async () => {
+	// Old plugins stay on the Kindle until someone copies a new one over by hand, so a change here
+	// breaks the Kindle silently. Extend the answers if needed; never rename or remove.
+	const { handleKindleRequest } = await import("./server.ts");
+	const { requestOpenOnKindle } = await import("./send.ts");
+
+	const idle = await handleKindleRequest(get("/kindle/request"));
+	expect(idle.status).toBe(204);
+
+	await requestOpenOnKindle("salmon-soup", 2);
+	const polled = await handleKindleRequest(get("/kindle/request"));
+	expect(polled.status).toBe(200);
+	expect(polled.headers.get("cache-control")).toBe("no-store");
+	const body = z
+		.object({
+			id: z.uuid(),
+			recipe: z.string(),
+			name: z.string(),
+			servings: z.number(),
+			url: z.string(),
+		})
+		.strict()
+		.parse(await polled.json());
+	expect(body).toMatchObject({ recipe: "salmon-soup", name: "Salmon soup", servings: 2 });
+	expect(body.url).toBe(`/kindle/recipe/${body.id}.epub`);
+
+	const book = await handleKindleRequest(get(body.url));
+	expect(book.status).toBe(200);
+	expect(book.headers.get("content-type")).toBe("application/epub+zip");
+	expect(book.headers.get("etag")).toMatch(/^"[0-9a-f]{40}"$/);
+
+	const opened = await handleKindleRequest(get(`/kindle/opened/${body.id}`, { method: "POST" }));
+	expect(opened.status).toBe(204);
+	// Marking twice is harmless: the plugin may retry after a timeout
+	expect(
+		(await handleKindleRequest(get(`/kindle/opened/${body.id}`, { method: "POST" }))).status,
+	).toBe(204);
+	expect((await handleKindleRequest(get("/kindle/request"))).status).toBe(204);
+
+	const cookbook = await handleKindleRequest(get("/cookbook.epub"));
+	expect(cookbook.status).toBe(200);
+	expect(cookbook.headers.get("content-disposition")).toBe(
+		'attachment; filename="Ruoka-Cookbook.epub"',
+	);
+});
+
+test("every book carries the cover, so the Kindle's sleep screen keeps it after cooking", async () => {
+	const { handleKindleRequest } = await import("./server.ts");
+	const { requestOpenOnKindle } = await import("./send.ts");
+	const { unzipFiles } = await import("../zip.ts");
+	await requestOpenOnKindle("salmon-soup", undefined);
+	const request = RequestJson.parse(
+		await (await handleKindleRequest(get("/kindle/request"))).json(),
+	);
+	const files = unzipFiles(
+		new Uint8Array(await (await handleKindleRequest(get(request.url))).arrayBuffer()),
+	);
+	expect(files.has("OEBPS/cover.png")).toBe(true);
+	expect(new TextDecoder().decode(files.get("OEBPS/content.opf"))).toContain(
+		'<meta name="cover" content="cover-image"/>',
+	);
+});
+
+test("the status shows which plugin release the Kindle runs", async () => {
+	const { handleKindleRequest } = await import("./server.ts");
+	const { kindleStatus } = await import("./send.ts");
+	await handleKindleRequest(get("/kindle/request"));
+	// The first plugin release sends no version
+	expect(kindleStatus().pluginVersion).toBeNull();
+	await handleKindleRequest(
+		get("/kindle/request", { headers: { "User-Agent": "Ruoka-KOReader/2 LuaSocket" } }),
+	);
+	expect(kindleStatus().pluginVersion).toBe("2");
 });

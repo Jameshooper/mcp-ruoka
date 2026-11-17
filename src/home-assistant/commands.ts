@@ -1,12 +1,17 @@
 import * as z from "zod/v4";
-import { requestOpenDinner } from "./kindle.ts";
-import { logger } from "./logger.ts";
+import { outbox } from "../kindle/outbox.ts";
+import { requestOpenDinner } from "../kindle/send.ts";
+import { logger } from "../logger.ts";
+import { type PublishOptions, publishState } from "./states.ts";
 
 // Home Assistant reaches the app through its stdin (the hassio.addon_stdin action), so an
 // automation can ask for things without another port or a token. The answer goes back as a sensor,
 // which the device that asked (the dinner-menu display) shows.
-const ENTITY_ID = "sensor.ruoka_kindle";
-const STATES_URL = `http://supervisor/core/api/states/${ENTITY_ID}`;
+//
+// The answer's state is "<message>~<date>~<time>": the date says which evening it answers ("-" when
+// the day was not understood), and the time makes every answer a new state, so the display hears a
+// repeat of the same answer too. Firmware that only reads up to the first ~ still gets the message.
+export const ANSWER_ENTITY = "sensor.ruoka_kindle";
 // One command is a few dozen bytes; anything this long without a newline is not a command
 const MAX_PENDING = 16 * 1024;
 
@@ -43,9 +48,35 @@ export function takeCommands(buffer: string): { commands: unknown[]; rest: strin
 	return { commands, rest };
 }
 
+type CommandOptions = PublishOptions & { now?: number };
+
+function publishAnswer(
+	message: string,
+	ok: boolean,
+	date: string | null,
+	now: number,
+	options: PublishOptions,
+) {
+	return publishState(
+		ANSWER_ENTITY,
+		{
+			state: `${message}~${date ?? "-"}~${now}`,
+			attributes: {
+				friendly_name: "Ruoka Kindle",
+				icon: "mdi:book-open-variant",
+				message,
+				sent: ok,
+				date,
+				at: new Date(now).toISOString(),
+			},
+		},
+		options,
+	);
+}
+
 export async function runCommand(
 	raw: unknown,
-	options: { now?: number; fetchFn?: typeof fetch; token?: string } = {},
+	options: CommandOptions = {},
 ): Promise<string | null> {
 	const command = CommandSchema.safeParse(raw);
 	if (!command.success) {
@@ -59,46 +90,24 @@ export async function runCommand(
 			{ day: command.data.kindle.day, reason: result.message },
 			"Nothing sent to the Kindle",
 		);
-	await publishResult(result.message, result.ok, now, options);
+	await publishAnswer(result.message, result.ok, result.date, now, options);
 	return result.message;
 }
 
-async function publishResult(
-	message: string,
-	ok: boolean,
-	now: number,
-	options: { fetchFn?: typeof fetch; token?: string },
-): Promise<void> {
-	const token = options.token ?? process.env.SUPERVISOR_TOKEN ?? "";
-	if (!token) return;
-	try {
-		const response = await (options.fetchFn ?? fetch)(STATES_URL, {
-			method: "POST",
-			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-			body: JSON.stringify({
-				// The time after the ~ makes every answer a new state, so the display hears a repeat of
-				// the same answer too
-				state: `${message}~${now}`,
-				attributes: {
-					friendly_name: "Ruoka Kindle",
-					icon: "mdi:book-open-variant",
-					message,
-					sent: ok,
-					at: new Date(now).toISOString(),
-				},
-			}),
-			signal: AbortSignal.timeout(10_000),
-		});
-		if (!response.ok)
-			logger.warn({ status: response.status }, "Home Assistant refused the Kindle answer");
-	} catch (err) {
-		logger.warn({ err }, "Could not publish the Kindle answer");
-	}
+// The display is still waiting when the Kindle opens what it sent (the Kindle asks every 5 seconds),
+// so it can show that the recipe is really there rather than only queued
+export function answerWhenOpened(options: PublishOptions = {}): () => void {
+	return outbox.onOpened((request) => {
+		if (request.origin.from !== "home-assistant") return;
+		const now = request.openedAt ?? Date.now();
+		void publishAnswer("Opened on the Kindle", true, request.origin.date, now, options);
+	});
 }
 
 // Only inside the Home Assistant app, where stdin carries the Supervisor's input
 export function startHomeAssistantCommands(input: NodeJS.ReadableStream = process.stdin): void {
 	if (!process.env.SUPERVISOR_TOKEN) return;
+	answerWhenOpened();
 	let buffer = "";
 	let queue: Promise<unknown> = Promise.resolve();
 	input.setEncoding("utf8");
