@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -294,4 +294,25 @@ test("the status shows which plugin release the Kindle runs", async () => {
 		get("/kindle/request", { headers: { "User-Agent": "Ruoka-KOReader/2 LuaSocket" } }),
 	);
 	expect(kindleStatus().pluginVersion).toBe("2");
+});
+
+test("the log names the plugin release once, and again only when it changes", async () => {
+	const { handleKindleRequest } = await import("./server.ts");
+	const { logger } = await import("../logger.ts");
+	const info = spyOn(logger, "info");
+	const releases = () =>
+		info.mock.calls.flatMap(([fields, msg]) =>
+			typeof msg === "string" && msg.startsWith("Kindle plugin release") ? [fields] : [],
+		);
+	try {
+		const v2 = { headers: { "User-Agent": "Ruoka-KOReader/2 LuaSocket" } };
+		await handleKindleRequest(get("/kindle/request"));
+		await handleKindleRequest(get("/kindle/request"));
+		await handleKindleRequest(get("/kindle/request", v2));
+		await handleKindleRequest(get("/cookbook.epub", v2));
+		await handleKindleRequest(get("/kindle/request", v2));
+		expect(releases()).toEqual([{ pluginVersion: null }, { pluginVersion: "2" }]);
+	} finally {
+		info.mockRestore();
+	}
 });
