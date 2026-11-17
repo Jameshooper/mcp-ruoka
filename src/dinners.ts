@@ -1,16 +1,9 @@
-import { logger } from "./logger.ts";
-import { listPlans, type MealPlan, onPlansChanged } from "./plan-book.ts";
+import type { MealPlan } from "./plan-book.ts";
 
-const ENTITY_ID = "sensor.ruoka_dinner_menu";
-const STATES_URL = `http://supervisor/core/api/states/${ENTITY_ID}`;
+// Which dinner falls on which evening, read from the saved meal plans. The dinner-menu sensor, the
+// cookbook's "This week" page and the Kindle's Cook button all use it.
+
 const DAYS = 7;
-// Often enough that the menu moves on to the next day soon after midnight, and that the sensor
-// comes back soon after a Home Assistant restart (states set through the API are not kept)
-const REFRESH_MS = 15 * 60_000;
-// Home Assistant refuses states longer than this
-const MAX_STATE_LENGTH = 255;
-const NOTHING_PLANNED = "Nothing planned";
-
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -27,6 +20,8 @@ export interface MenuDay {
 	dish: string | null;
 	recipe: string | null;
 	plan: string | null;
+	// The meal's protein tag from the plan (fish, white_meat, red_meat, vegetarian, other)
+	protein: string | null;
 }
 
 function pad(n: number): string {
@@ -135,64 +130,7 @@ export function buildMenu(plans: MealPlan[], today: Date, days = DAYS): MenuDay[
 			dish: found ? (found.meal.dish ?? found.meal.name) : null,
 			recipe: found?.meal.recipe ?? null,
 			plan: found?.plan.name ?? null,
+			protein: found?.meal.protein ?? null,
 		};
 	});
-}
-
-// Flat day_1..day_7 strings ("Mon 16 Nov~Salmon soup") alongside the list, because small displays
-// (ESPHome) read one attribute as plain text far more easily than they parse a JSON list
-export function menuState(menu: MenuDay[]) {
-	const tonight = menu[0]?.dish ?? NOTHING_PLANNED;
-	const attributes: Record<string, unknown> = {
-		friendly_name: "Dinner menu",
-		icon: "mdi:silverware-fork-knife",
-		days: menu,
-	};
-	menu.forEach((day, i) => {
-		attributes[`day_${i + 1}`] = `${day.label}~${day.dish ?? "-"}`;
-	});
-	return {
-		state:
-			tonight.length > MAX_STATE_LENGTH ? `${tonight.slice(0, MAX_STATE_LENGTH - 3)}...` : tonight,
-		attributes,
-	};
-}
-
-export type PublishResult = { ok: true } | { ok: false; error: string };
-
-export async function publishDinnerMenu(
-	options: { now?: Date; fetchFn?: typeof fetch; token?: string; plans?: MealPlan[] } = {},
-): Promise<PublishResult> {
-	const token = options.token ?? process.env.SUPERVISOR_TOKEN ?? "";
-	if (!token) return { ok: false, error: "Not running inside Home Assistant" };
-	const plans = options.plans ?? (await listPlans());
-	const body = menuState(buildMenu(plans, options.now ?? new Date()));
-	try {
-		const response = await (options.fetchFn ?? fetch)(STATES_URL, {
-			method: "POST",
-			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-			signal: AbortSignal.timeout(10_000),
-		});
-		if (!response.ok) {
-			logger.warn({ status: response.status }, "Home Assistant refused the dinner menu");
-			return { ok: false, error: `Home Assistant answered HTTP ${response.status}` };
-		}
-		return { ok: true };
-	} catch (err) {
-		logger.warn({ err }, "Could not publish the dinner menu");
-		return { ok: false, error: "Could not reach Home Assistant" };
-	}
-}
-
-// Only inside the Home Assistant app, where the Supervisor token exists
-export function startDinnerMenuSync(): void {
-	if (!process.env.SUPERVISOR_TOKEN) return;
-	const run = () => {
-		void publishDinnerMenu();
-	};
-	run();
-	setInterval(run, REFRESH_MS).unref();
-	onPlansChanged(run);
-	logger.info({ entity: ENTITY_ID }, "Publishing the dinner menu to Home Assistant");
 }

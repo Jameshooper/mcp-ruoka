@@ -15,7 +15,7 @@ import {
 	requestOpenInstagram,
 	requestOpenOnKindle,
 	requestOpenWebRecipe,
-} from "./kindle.ts";
+} from "./kindle/send.ts";
 import { logger } from "./logger.ts";
 import { sendNotification } from "./notify.ts";
 import {

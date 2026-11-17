@@ -132,7 +132,8 @@ const RequestJson = z.object({
 
 test("share sheet to Kindle: the page is read, sent, and served to the Kindle as a book", async () => {
 	const { handleUiRequest, setWebFetchForTests } = await import("./ui-server.ts");
-	const { handleKindleRequest, resetKindleState } = await import("./kindle.ts");
+	const { handleKindleRequest } = await import("./kindle/server.ts");
+	const { resetKindleState } = await import("./kindle/send.ts");
 	resetKindleState();
 	const fetched: string[] = [];
 	setWebFetchForTests(async (url) => {

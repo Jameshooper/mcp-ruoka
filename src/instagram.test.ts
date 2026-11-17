@@ -66,7 +66,8 @@ function share(path: string) {
 
 test("shared from Instagram: the caption goes to the Kindle, or into the inbox for Claude", async () => {
 	const { handleUiRequest, setWebFetchForTests } = await import("./ui-server.ts");
-	const { handleKindleRequest, resetKindleState } = await import("./kindle.ts");
+	const { handleKindleRequest } = await import("./kindle/server.ts");
+	const { resetKindleState } = await import("./kindle/send.ts");
 	const { listDrafts, deleteDraft } = await import("./draft-book.ts");
 	resetKindleState();
 	const fetched: string[] = [];
