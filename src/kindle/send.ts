@@ -1,4 +1,4 @@
-import { dayLabel, dinnersByDate, mealDate } from "../dinners.ts";
+import { dayLabel, dinnersByDate, localIsoDate, mealDate } from "../dinners.ts";
 import type { InstagramPost } from "../instagram.ts";
 import { listPlans } from "../plan-book.ts";
 import { findRecipe, listRecipes, type Recipe, scaleRecipe, slugify } from "../recipe-book.ts";
@@ -67,7 +67,11 @@ export type DinnerSendResult =
 // The dinner-menu display's Cook button sends the evening it is showing: as a date from firmware
 // that reads day_N_full, as the label it shows ("Mon 16 Nov") from older firmware. Messages are
 // short because the display shows them.
-export async function requestOpenDinner(day: string, now = Date.now()): Promise<DinnerSendResult> {
+export async function requestOpenDinner(
+	day: string,
+	now = Date.now(),
+	from: "home-assistant" | "evening" = "home-assistant",
+): Promise<DinnerSendResult> {
 	const date = mealDate({ name: day, date: day }, new Date(now).toISOString());
 	if (!date) return { ok: false, message: "Unknown day", date: null };
 	const [y, m, d] = date.split("-").map(Number);
@@ -93,7 +97,7 @@ export async function requestOpenDinner(day: string, now = Date.now()): Promise<
 		);
 	}
 	if (!item) return { ok: false, message: `No recipe for ${label}`, date };
-	const request = outbox.send(item, { from: "home-assistant", date }, now);
+	const request = outbox.send(item, { from, date }, now);
 	return {
 		ok: true,
 		// A Kindle that has not asked lately is asleep or out of KOReader, and gets the recipe
@@ -104,10 +108,42 @@ export async function requestOpenDinner(day: string, now = Date.now()): Promise<
 	};
 }
 
+// From late afternoon the Kindle opens tonight's dinner by itself: the plugin already asks for a
+// request every few seconds while KOReader is open and right after the Kindle wakes, so the first
+// time someone picks it up in the evening the recipe is there, with no change to the plugin.
+// Anything sent to the Kindle since the evening began (this dinner, or a recipe someone chose
+// instead) counts as handled, so it is handed over once and never takes over a book picked later.
+const EVENING_START_HOUR = 16;
+const EVENING_END_HOUR = 21;
+// The plans are read from disk; with nothing planned, look again now and then rather than on
+// every poll
+const EVENING_RETRY_MS = 5 * 60_000;
+let lastEveningTry: number | null = null;
+
+export async function sendTonightIfDue(now = Date.now()): Promise<void> {
+	const at = new Date(now);
+	const hour = at.getHours();
+	if (hour < EVENING_START_HOUR || hour >= EVENING_END_HOUR) return;
+	const eveningStart = new Date(
+		at.getFullYear(),
+		at.getMonth(),
+		at.getDate(),
+		EVENING_START_HOUR,
+	).getTime();
+	// An unopened request that expired is gone from the outbox, so a Kindle that never fetched
+	// tonight's dinner is offered it again
+	const latest = outbox.current(now);
+	if (latest && latest.requestedAt >= eveningStart) return;
+	if (lastEveningTry !== null && now - lastEveningTry < EVENING_RETRY_MS) return;
+	lastEveningTry = now;
+	await requestOpenDinner(localIsoDate(at), now, "evening");
+}
+
 export function kindleStatus(now = Date.now()) {
 	return outbox.status(now);
 }
 
 export function resetKindleState(): void {
 	outbox.reset();
+	lastEveningTry = null;
 }

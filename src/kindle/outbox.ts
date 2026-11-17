@@ -23,8 +23,12 @@ export interface Sendable {
 	book: Uint8Array;
 }
 
-// Who asked: Home Assistant (the dinner-menu display) hears back when the Kindle opens the book
-export type SendOrigin = { from: "app" } | { from: "home-assistant"; date: string };
+// Who asked: Home Assistant (the dinner-menu display) hears back when the Kindle opens the book.
+// "evening" is the app itself handing over tonight's dinner (send.ts, sendTonightIfDue).
+export type SendOrigin =
+	| { from: "app" }
+	| { from: "home-assistant"; date: string }
+	| { from: "evening"; date: string };
 
 export interface KindleRequest extends Sendable {
 	id: string;
