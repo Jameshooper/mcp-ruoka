@@ -21,7 +21,7 @@ mock.module("./search.ts", () => ({
 				imageUrl: null,
 				brand: null,
 				category: null,
-				url: null,
+				url: `https://www.s-kaupat.fi/tuote/${p.id}`,
 			})),
 			totalCount: 1,
 			query,
@@ -434,4 +434,43 @@ test("a saved recipe's times carry into the saved plan's meal", async () => {
 	const meals = (await findPlan("timed-week"))?.meals;
 	expect([meals?.[0]?.prepMinutes, meals?.[0]?.cookMinutes]).toEqual([15, 25]);
 	expect([meals?.[1]?.prepMinutes, meals?.[1]?.cookMinutes]).toEqual([undefined, 20]);
+});
+
+test("plan_meals and get_meal_plan replies are compact and leave out product links, which the saved plan keeps", async () => {
+	const { findPlan } = await import("../plan-book.ts");
+	const client = await connect();
+	const res = await client.callTool({
+		name: "plan_meals",
+		arguments: {
+			chain: "s-kaupat",
+			storeId: "1",
+			saveAs: "Slim reply",
+			meals: [
+				{
+					name: "Mon",
+					servings: 2,
+					ingredients: [
+						{ english: "rice", finnish: ["riisi"], quantity: { amount: 200, unit: "g" } },
+					],
+				},
+			],
+		},
+	});
+	const text = (res as { content: Array<{ text: string }> }).content[0]?.text ?? "";
+	// Every later turn of the conversation carries this reply, so indentation is not spent on it
+	expect(text).not.toContain("\n");
+	const out = parse(res);
+	expect(out.toBuy.lines[0]).toMatchObject({ productId: "211", product: "Rice 1 kg" });
+	expect(out.toBuy.lines[0]).not.toHaveProperty("url");
+	const plan = await findPlan("Slim reply");
+	expect(plan?.toBuy.lines[0]?.url).toBe("https://www.s-kaupat.fi/tuote/211");
+
+	// get_meal_plan slims the saved plan the same way
+	const got = await client.callTool({ name: "get_meal_plan", arguments: { plan: "Slim reply" } });
+	const gotText = (got as { content: Array<{ text: string }> }).content[0]?.text ?? "";
+	expect(gotText).not.toContain("\n");
+	const saved = parse(got);
+	expect(saved.toBuy.lines[0]).toMatchObject({ productId: "211" });
+	expect(saved.toBuy.lines[0]).not.toHaveProperty("url");
+	expect(saved.meals[0]).toMatchObject({ name: "Mon", servings: 2 });
 });
