@@ -773,7 +773,7 @@ function storeParams(store) {
 }
 
 // Built in rather than a config default: Home Assistant keeps an option's saved value, so a changed default would never reach an existing install
-const BASE_RULES = "Never choose Xtra own-brand products. Only add vegetables to a dish if it normally has them; a side vegetable or salad is fine otherwise.";
+const BASE_RULES = "Never choose Xtra own-brand products. Only add vegetables to a dish if it normally has them; a side vegetable or salad is fine otherwise. For a dish cooked sous vide, save its sousVide settings starting from a preset (list_sous_vide_presets), adjusting the thickness to the actual cut; only call it safe when sous_vide_status says complete.";
 
 function withNote(text) {
   return [text, BASE_RULES, config.promptNote].filter(Boolean).join("\n\n");
@@ -872,6 +872,79 @@ function kindleButton(recipe, servingsInput) {
     }
   } }, "📖 Open on Kindle");
   return el("div", { class: "row" }, button, note);
+}
+
+const SOUS_VIDE_PROTEIN = { meat: "Beef / pork / lamb", poultry: "Poultry", fish_lean: "Lean fish", fish_fatty: "Fatty fish" };
+const SOUS_VIDE_STAGE = {
+  idle: "Not cooking",
+  "heating water": "Heating the water",
+  heating: "Bags in, core warming up",
+  holding: "Core at target, pasteurising",
+  complete: "✅ Pasteurised",
+  unknown: "Unknown",
+};
+
+// Home Assistant runs the cook and decides when the food is safe; this card only starts or stops
+// it and shows what Home Assistant reports, polling while the recipe stays open.
+function sousVideCard(recipe) {
+  const sv = recipe.sousVide;
+  if (!sv) return null;
+  const offset = sv.bathOffsetC ?? 1;
+  const cell = (label) => {
+    const value = el("b", {}, "–");
+    return { value, node: el("div", { class: "macro" }, value, el("small", {}, label)) };
+  };
+  const water = cell("water"), core = cell("core"), done = cell("pasteurised"), finish = cell("planned finish");
+  const stage = el("div", { class: "meta" }, "");
+  const note = el("span", { class: "meta" });
+  const card = el("div", {},
+    el("h3", {}, "♨️ Sous vide"),
+    el("div", { class: "meta" }, [sv.preset, SOUS_VIDE_PROTEIN[sv.protein], `core ${sv.coreTempC} °C`, `bath ${sv.coreTempC + offset} °C`, `${sv.thicknessMm} mm`].filter(Boolean).join(" · ")),
+    sv.finish ? el("div", { class: "meta" }, `Finish: ${sv.finish}`) : null,
+    el("div", { class: "macros", style: "grid-template-columns: repeat(4, 1fr)" }, water.node, core.node, done.node, finish.node),
+    stage,
+  );
+  const show = (s) => {
+    water.value.textContent = s.waterC === null ? "–" : `${s.waterC} °C`;
+    core.value.textContent = s.coreC === null ? "–" : `${s.coreC} °C`;
+    done.value.textContent = s.pasteurisedPercent === null ? "–" : `${Math.min(100, Math.round(s.pasteurisedPercent))} %`;
+    const at = s.plannedFinish ? new Date(s.plannedFinish.replace(" ", "T")) : null;
+    finish.value.textContent = at && s.stage !== "idle" && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "–";
+    stage.textContent = SOUS_VIDE_STAGE[s.stage] || s.stage;
+  };
+  const refresh = async () => {
+    if (!card.isConnected) return;
+    try {
+      show(await api("api/sous-vide/status"));
+    } catch (error) {
+      stage.textContent = `Home Assistant not reachable: ${error.message}`;
+    }
+    setTimeout(refresh, 15000);
+  };
+  const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  card.append(el("div", { class: "row" },
+    el("button", { type: "button", onclick: async () => {
+      if (!confirm("Start the sous vide? Make sure the pot has water in it.")) return;
+      try {
+        const r = await post("api/sous-vide/start", { recipe: recipe.id });
+        note.textContent = `Heating to ${r.coreTempC + r.bathOffsetC} °C. Your phone will say when to drop the bags in and start the MEATER.`;
+      } catch (error) {
+        note.textContent = `Could not start: ${error.message}`;
+      }
+    } }, "▶ Start sous vide"),
+    el("button", { type: "button", onclick: async () => {
+      try {
+        await post("api/sous-vide/stop", {});
+        note.textContent = "Cooker switched off";
+      } catch (error) {
+        note.textContent = `Could not stop: ${error.message}`;
+      }
+    } }, "⏹ Stop"),
+    note,
+  ));
+  card.append(el("div", { class: "macros-note" }, "The MEATER decides when it's safe, not the clock."));
+  setTimeout(refresh, 0);
+  return card;
 }
 
 function cookLink(meal, known) {
@@ -1201,6 +1274,7 @@ function showDetail(id) {
         { label: "🛒 Shop with Claude", text: () => recipeShopPrompt(recipe, Number(servings.value) || recipe.servings) },
       ]),
       kindleButton(recipe, servings),
+      sousVideCard(recipe),
       macrosCard(recipe.nutrition),
       price ? price.node : null,
       el("div", { class: "row" }, el("span", { class: "meta" }, "Servings"), stepper(servings)),

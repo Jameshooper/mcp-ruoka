@@ -9,6 +9,7 @@ import {
 	previewBackup,
 } from "./backup.ts";
 import { addInstagramDraft, deleteDraft, listDrafts } from "./draft-book.ts";
+import { cookStatus, startCook, stopCook } from "./home-assistant/sous-vide.ts";
 import { fetchInstagramPost, isInstagramLink } from "./instagram.ts";
 import {
 	kindleStatus,
@@ -36,6 +37,7 @@ import {
 	scaleRecipe,
 } from "./recipe-book.ts";
 import { ImportModeSchema } from "./schemas.ts";
+import { resolveSousVide } from "./sous-vide.ts";
 import { getStoreNames } from "./store-names.ts";
 import { IMPORT_TAG, webRecipeToInput } from "./web-import.ts";
 import { fetchWebRecipe, type WebFetch, WebRecipeError } from "./web-recipe.ts";
@@ -80,6 +82,8 @@ const KindleOpenBodySchema = z.object({
 	recipe: z.string().min(1).max(200),
 	servings: z.number().int().positive().max(100).optional(),
 });
+
+const SousVideStartBodySchema = z.object({ recipe: z.string().min(1).max(200) });
 
 const KindleUrlBodySchema = z.object({ url: z.string().min(1).max(2000) });
 
@@ -326,6 +330,34 @@ async function routeUiRequest(req: Request): Promise<Response> {
 
 	if (path === "/api/kindle/status" && req.method === "GET") {
 		return json(kindleStatus());
+	}
+
+	if (path === "/api/sous-vide/status" && req.method === "GET") {
+		const status = await cookStatus();
+		return "error" in status ? json(status, 503) : json(status);
+	}
+
+	if (
+		(path === "/api/sous-vide/start" || path === "/api/sous-vide/stop") &&
+		req.method === "POST"
+	) {
+		// A JSON content type forces a CORS preflight, so other sites cannot switch the cooker on
+		if (!req.headers.get("content-type")?.includes("application/json")) {
+			return json({ error: "Expected JSON" }, 415);
+		}
+		if (path.endsWith("/stop")) {
+			const stopped = await stopCook();
+			return stopped.ok ? json({ stopped: true }) : json({ error: stopped.error }, 502);
+		}
+		const body = SousVideStartBodySchema.safeParse(await req.json().catch(() => null));
+		if (!body.success) return json({ error: "Invalid request" }, 400);
+		const recipe = await findRecipe(body.data.recipe);
+		if (!recipe) return json({ error: "Recipe not found" }, 404);
+		if (!recipe.sousVide) return json({ error: "This recipe has no sous vide settings" }, 400);
+		const settings = resolveSousVide({ recipe: recipe.sousVide });
+		if ("error" in settings) return json(settings, 400);
+		const started = await startCook(settings);
+		return started.ok ? json({ started: true, ...settings }) : json({ error: started.error }, 502);
 	}
 
 	if (path === "/api/kindle/open" && req.method === "POST") {

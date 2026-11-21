@@ -720,3 +720,36 @@ test("the Supervisor token and other secrets never appear in answers, backups or
 	const everything = [...seen, ...lines].join("\n");
 	for (const canary of Object.values(canaries)) expect(everything).not.toContain(canary);
 });
+
+test("sous vide routes refuse unsafe requests and start only recipes with settings", async () => {
+	const { saveRecipe } = await import("./recipe-book.ts");
+	const { handleUiRequest } = await import("./ui-server.ts");
+	await saveRecipe({ ...recipe, name: "Plain stew" });
+	await saveRecipe({
+		...recipe,
+		name: "SV chicken",
+		sousVide: { preset: "Chicken breast", protein: "poultry", coreTempC: 63, thicknessMm: 23 },
+	});
+	const post = (path: string, body: unknown, contentType = "application/json") =>
+		handleUiRequest(
+			new Request(`http://x${path}`, {
+				method: "POST",
+				headers: { "Content-Type": contentType },
+				body: JSON.stringify(body),
+			}),
+		);
+
+	expect((await post("/api/sous-vide/start", { recipe: "SV chicken" }, "text/plain")).status).toBe(
+		415,
+	);
+	expect((await post("/api/sous-vide/start", { recipe: "nothing" })).status).toBe(404);
+	expect((await post("/api/sous-vide/start", { recipe: "Plain stew" })).status).toBe(400);
+
+	const saved = process.env.SUPERVISOR_TOKEN;
+	delete process.env.SUPERVISOR_TOKEN;
+	// Outside Home Assistant the request is understood but nothing can be switched on
+	const outside = await post("/api/sous-vide/start", { recipe: "SV chicken" });
+	expect(outside.status).toBe(502);
+	expect((await handleUiRequest(new Request("http://x/api/sous-vide/status"))).status).toBe(503);
+	if (saved !== undefined) process.env.SUPERVISOR_TOKEN = saved;
+});
