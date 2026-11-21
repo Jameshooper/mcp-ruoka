@@ -9,7 +9,13 @@ import {
 	previewBackup,
 } from "./backup.ts";
 import { addInstagramDraft, deleteDraft, listDrafts } from "./draft-book.ts";
-import { cookStatus, startCook, stopCook } from "./home-assistant/sous-vide.ts";
+import {
+	cookStatus,
+	startCook,
+	startManual,
+	stopCook,
+	stopManual,
+} from "./home-assistant/sous-vide.ts";
 import { fetchInstagramPost, isInstagramLink } from "./instagram.ts";
 import {
 	kindleStatus,
@@ -39,6 +45,7 @@ import {
 import { ImportModeSchema } from "./schemas.ts";
 import {
 	findPreset,
+	ManualBathSchema,
 	resolveSousVide,
 	SOUS_VIDE_PRESETS,
 	SousVideOverridesSchema,
@@ -87,6 +94,11 @@ const KindleOpenBodySchema = z.object({
 	recipe: z.string().min(1).max(200),
 	servings: z.number().int().positive().max(100).optional(),
 });
+
+const ManualBodySchema = z.union([
+	ManualBathSchema.extend({ on: z.literal(true) }),
+	z.object({ on: z.literal(false) }),
+]);
 
 // Either a saved recipe, or a preset with the cook's adjustments (thickness of the actual cut)
 const SousVideStartBodySchema = z.union([
@@ -348,6 +360,18 @@ async function routeUiRequest(req: Request): Promise<Response> {
 	if (path === "/api/sous-vide/status" && req.method === "GET") {
 		const status = await cookStatus();
 		return "error" in status ? json(status, 503) : json(status);
+	}
+
+	if (path === "/api/sous-vide/manual" && req.method === "POST") {
+		if (!req.headers.get("content-type")?.includes("application/json")) {
+			return json({ error: "Expected JSON" }, 415);
+		}
+		const body = ManualBodySchema.safeParse(await req.json().catch(() => null));
+		if (!body.success) return json({ error: "Invalid request" }, 400);
+		const result = body.data.on
+			? await startManual(body.data.bathC, body.data.minutes)
+			: await stopManual();
+		return result.ok ? json({ ok: true }) : json({ error: result.error }, 502);
 	}
 
 	if (

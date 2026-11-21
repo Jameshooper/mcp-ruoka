@@ -891,7 +891,7 @@ const SOUS_VIDE_STAGE = {
 
 // Home Assistant runs the cook and decides when the food is safe; these controls only start or
 // stop it and show what Home Assistant reports, polling while they stay on screen.
-function sousVideControls(startBody) {
+function sousVideControls(startBody, onStatus) {
   const cell = (label) => {
     const value = el("b", {}, "–");
     return { value, node: el("div", { class: "macro" }, value, el("small", {}, label)) };
@@ -906,6 +906,7 @@ function sousVideControls(startBody) {
     const at = s.plannedFinish ? new Date(s.plannedFinish.replace(" ", "T")) : null;
     finish.value.textContent = at && s.stage !== "idle" && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "–";
     stage.textContent = SOUS_VIDE_STAGE[s.stage] || s.stage;
+    if (onStatus) onStatus(s);
   };
   const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const node = el("div", {},
@@ -996,6 +997,43 @@ async function openSousVide() {
   select.addEventListener("change", choose);
   for (const input of [coreInput, offsetInput]) input.addEventListener("input", updateBath);
   choose();
+  // Manual mode is the cooker as a plain water heater: nothing here is tracked for pasteurisation
+  const bathInput = number(20, 90, 0.5), hoursInput = number(0, 24, 1), minsInput = number(0, 59, 5);
+  bathInput.value = 60;
+  hoursInput.value = 1;
+  minsInput.value = 0;
+  const timerLine = el("div", { class: "meta" }, "");
+  const manualNote = el("span", { class: "meta" });
+  const manualPost = (body) => api("api/sous-vide/manual", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const manualCard = el("div", { class: "starter" },
+    el("h2", {}, "🎛️ Manual"),
+    el("div", { class: "meta" }, "Set the water and a timer yourself. Not tracked for pasteurisation: for eggs, fish below 55 °C, or warming water."),
+    field("Water", bathInput, "°C"),
+    el("label", { class: "row" }, el("span", { class: "meta" }, "Timer"), hoursInput, el("span", { class: "meta" }, "h"), minsInput, el("span", { class: "meta" }, "min")),
+    el("div", { class: "macros-note" }, "Set the timer to 0 h 0 min to keep it running until you switch it off."),
+    timerLine,
+    el("div", { class: "row" },
+      el("button", { type: "button", class: "btn primary", onclick: async () => {
+        const minutes = (Number(hoursInput.value) || 0) * 60 + (Number(minsInput.value) || 0);
+        if (!confirm("Switch the cooker on? Make sure the pot has water in it.")) return;
+        try {
+          await manualPost(minutes > 0 ? { on: true, bathC: Number(bathInput.value), minutes } : { on: true, bathC: Number(bathInput.value) });
+          manualNote.textContent = minutes > 0 ? `Heating to ${bathInput.value} °C, switching off after ${minutes} min` : `Heating to ${bathInput.value} °C, no timer`;
+        } catch (error) {
+          manualNote.textContent = `Could not switch on: ${error.message}`;
+        }
+      } }, "▶ On"),
+      el("button", { type: "button", class: "btn", onclick: async () => {
+        try {
+          await manualPost({ on: false });
+          manualNote.textContent = "Cooker switched off";
+        } catch (error) {
+          manualNote.textContent = `Could not switch off: ${error.message}`;
+        }
+      } }, "⏹ Off"),
+      manualNote,
+    ),
+  );
   view.replaceChildren(
     el("div", { class: "starter" },
       el("h2", {}, "♨️ Quick sous vide"),
@@ -1012,7 +1050,13 @@ async function openSousVide() {
       coreTempC: Number(coreInput.value),
       thicknessMm: Math.round(Number(thickInput.value)),
       bathOffsetC: Number(offsetInput.value),
-    })),
+    }), (st) => {
+      const end = st.timerEndsAt ? new Date(st.timerEndsAt) : null;
+      timerLine.textContent = end && !Number.isNaN(end.getTime())
+        ? `Manual timer: switches off at ${end.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+        : st.cookerOn ? "Cooker on, no timer" : "Cooker off";
+    }),
+    manualCard,
   );
   window.scrollTo(0, 0);
 }

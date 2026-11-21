@@ -8,6 +8,12 @@ import type { PublishOptions, PublishResult } from "./states.ts";
 // The app only starts and stops that script and reads the result back.
 export const COOK_SCRIPT = "script.sous_vide_cook";
 export const STOP_SCRIPT = "script.sous_vide_stop";
+// Manual mode skips the cook script and the pasteurisation tracking: the cook just sets the water
+// and, optionally, how long it runs. Home Assistant switches the cooker off when the timer ends,
+// so the app does not need to stay open.
+export const MANUAL_TIMER = "timer.sous_vide_manual_timer";
+const BATH_NUMBER = "number.sous_vide_set_temperature";
+const COOKER_SWITCH = "switch.isv_100w2_0_sous_vide_running";
 
 const STATUS_ENTITIES = {
 	state: "input_select.pasteurisation_state",
@@ -25,7 +31,10 @@ const STATUS_ENTITIES = {
 	heating: COOK_SCRIPT,
 } as const;
 
-const StateSchema = z.object({ state: z.string() });
+const StateSchema = z.object({
+	state: z.string(),
+	attributes: z.record(z.string(), z.unknown()).optional(),
+});
 
 function token(options: PublishOptions): string {
 	return options.token ?? process.env.SUPERVISOR_TOKEN ?? "";
@@ -60,7 +69,10 @@ async function callService(
 	}
 }
 
-async function readState(entityId: string, options: PublishOptions): Promise<string | null> {
+async function readEntity(
+	entityId: string,
+	options: PublishOptions,
+): Promise<z.infer<typeof StateSchema> | null> {
 	try {
 		const response = await (options.fetchFn ?? fetch)(
 			`http://supervisor/core/api/states/${entityId}`,
@@ -71,12 +83,15 @@ async function readState(entityId: string, options: PublishOptions): Promise<str
 		);
 		if (!response.ok) return null;
 		const parsed = StateSchema.safeParse(await response.json());
-		if (!parsed.success) return null;
-		const state = parsed.data.state;
-		return state === "unavailable" || state === "unknown" ? null : state;
+		return parsed.success ? parsed.data : null;
 	} catch {
 		return null;
 	}
+}
+
+async function readState(entityId: string, options: PublishOptions): Promise<string | null> {
+	const state = (await readEntity(entityId, options))?.state ?? null;
+	return state === "unavailable" || state === "unknown" ? null : state;
 }
 
 // script.turn_on returns at once; calling the script itself would hold the request open for the
@@ -105,6 +120,41 @@ export function stopCook(options: PublishOptions = {}): Promise<PublishResult> {
 	return callService("script", "turn_on", { entity_id: STOP_SCRIPT }, options);
 }
 
+function duration(minutes: number): string {
+	const h = Math.floor(minutes / 60);
+	const m = minutes % 60;
+	return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+}
+
+export async function startManual(
+	bathC: number,
+	minutes: number | undefined,
+	options: PublishOptions = {},
+): Promise<PublishResult> {
+	const set = await callService(
+		"number",
+		"set_value",
+		{ entity_id: BATH_NUMBER, value: bathC },
+		options,
+	);
+	if (!set.ok) return set;
+	const on = await callService("switch", "turn_on", { entity_id: COOKER_SWITCH }, options);
+	if (!on.ok) return on;
+	return minutes
+		? callService(
+				"timer",
+				"start",
+				{ entity_id: MANUAL_TIMER, duration: duration(minutes) },
+				options,
+			)
+		: callService("timer", "cancel", { entity_id: MANUAL_TIMER }, options);
+}
+
+export async function stopManual(options: PublishOptions = {}): Promise<PublishResult> {
+	await callService("timer", "cancel", { entity_id: MANUAL_TIMER }, options);
+	return callService("switch", "turn_off", { entity_id: COOKER_SWITCH }, options);
+}
+
 function num(value: string | null): number | null {
 	if (value === null) return null;
 	const n = Number(value);
@@ -124,6 +174,7 @@ export interface CookStatus {
 	fsaiHoldRemainingMin: number | null;
 	plannedBathMinutes: number | null;
 	plannedFinish: string | null;
+	timerEndsAt: string | null;
 }
 
 export async function cookStatus(
@@ -131,7 +182,11 @@ export async function cookStatus(
 ): Promise<CookStatus | { error: string }> {
 	if (!token(options)) return { error: "Not running inside Home Assistant" };
 	const entries = Object.entries(STATUS_ENTITIES);
-	const values = await Promise.all(entries.map(([, entityId]) => readState(entityId, options)));
+	const [values, timer] = await Promise.all([
+		Promise.all(entries.map(([, entityId]) => readState(entityId, options))),
+		readEntity(MANUAL_TIMER, options),
+	]);
+	const finishesAt = timer?.attributes?.finishes_at;
 	const s: Record<string, string | null> = {};
 	entries.forEach(([key], i) => {
 		s[key] = values[i] ?? null;
@@ -156,5 +211,6 @@ export async function cookStatus(
 		fsaiHoldRemainingMin: num(s.fsaiRemaining ?? null),
 		plannedBathMinutes: num(s.plannedMinutes ?? null),
 		plannedFinish: s.plannedFinish ?? null,
+		timerEndsAt: timer?.state === "active" && typeof finishesAt === "string" ? finishesAt : null,
 	};
 }
