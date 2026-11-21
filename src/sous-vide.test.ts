@@ -7,6 +7,7 @@ import {
 	stopManual,
 } from "./home-assistant/sous-vide.ts";
 import {
+	estimateSousVide,
 	findPreset,
 	ManualBathSchema,
 	resolveSousVide,
@@ -207,4 +208,26 @@ test("a cook without the MEATER tells the script to time it from the table", asy
 		{ token: "t", fetchFn },
 	);
 	expect(bodies[0]).toMatchObject({ variables: { meater: false, protein: "Poultry" } });
+});
+
+test("estimates match Baldwin's tables and stay on the safe side", () => {
+	// Table 4.1, 63 °C column, 25 mm: 1¼ hr; Table 1.1 slab, 25 mm: 50 min
+	expect(estimateSousVide("poultry", 63, 25)).toEqual({
+		cookMinutes: 75,
+		coolMinutes: 50,
+		coolWithinFsai: true,
+	});
+	// Part degrees use the cooler (longer) column; 23 mm rounds up to 25 mm
+	expect(estimateSousVide("poultry", 63.5, 23).cookMinutes).toBe(75);
+	// Above the table the hottest column applies (Table 5.1, 66 °C, 25 mm: 55 min)
+	expect(estimateSousVide("meat", 70, 25).cookMinutes).toBe(55);
+	// Below the table there is no table time
+	expect(estimateSousVide("poultry", 56, 25).cookMinutes).toBeNull();
+	// Table 3.1 fatty fish, 60 °C, 70 mm: 5¼ hr
+	expect(estimateSousVide("fish_fatty", 60, 70).cookMinutes).toBe(315);
+	// 50 mm takes 2¾ hr to chill, past the FSAI 2 hour limit
+	expect(estimateSousVide("meat", 60, 50)).toMatchObject({
+		coolMinutes: 165,
+		coolWithinFsai: false,
+	});
 });

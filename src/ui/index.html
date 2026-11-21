@@ -961,6 +961,34 @@ function sousVideControls(startBody, onStatus) {
   return node;
 }
 
+function minutesText(m) {
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), rest = m % 60;
+  return rest ? `${h} h ${rest} min` : `${h} h`;
+}
+
+// Baldwin's table times for what is selected: the bath from fridge-cold, and the ice bath to 5 °C
+function estimateLine() {
+  const node = el("div", { class: "meta" }, "");
+  let seq = 0;
+  const update = async (protein, coreTempC, thicknessMm) => {
+    const mine = ++seq;
+    try {
+      const q = new URLSearchParams({ protein, coreTempC: String(coreTempC), thicknessMm: String(thicknessMm) });
+      const e = await api(`api/sous-vide/estimate?${q}`);
+      if (mine !== seq) return;
+      const cook = e.cookMinutes === null
+        ? "Cook time: outside Baldwin's table (MEATER only)"
+        : `Cook time: about ${minutesText(e.cookMinutes)} from fridge-cold`;
+      const cool = `Ice bath to 5 °C: about ${minutesText(e.coolMinutes)}${e.coolWithinFsai ? "" : " (longer than the FSAI 2 h limit: serve straight away or cut thinner)"}`;
+      node.replaceChildren(el("div", {}, `⏱️ ${cook}`), el("div", {}, `🧊 ${cool}`));
+    } catch {
+      if (mine === seq) node.textContent = "";
+    }
+  };
+  return { node, update };
+}
+
 function sousVideCard(recipe) {
   const sv = recipe.sousVide;
   if (!sv) return null;
@@ -969,6 +997,11 @@ function sousVideCard(recipe) {
     el("h3", {}, "♨️ Sous vide"),
     el("div", { class: "meta" }, [sv.preset, SOUS_VIDE_PROTEIN[sv.protein], `core ${sv.coreTempC} °C`, `bath ${sv.coreTempC + offset} °C`, `${sv.thicknessMm} mm`].filter(Boolean).join(" · ")),
     sv.finish ? el("div", { class: "meta" }, `Finish: ${sv.finish}`) : null,
+    (() => {
+      const est = estimateLine();
+      est.update(sv.protein, sv.coreTempC, sv.thicknessMm);
+      return est.node;
+    })(),
     sousVideControls(() => ({ recipe: recipe.id })),
   );
 }
@@ -992,8 +1025,11 @@ async function openSousVide() {
   const about = el("div", { class: "meta" });
   const bath = el("div", { class: "meta" });
   const field = (label, input, unit) => el("label", { class: "row" }, el("span", { class: "meta" }, label), input, el("span", { class: "meta" }, unit));
+  const estimate = estimateLine();
   const updateBath = () => {
     bath.textContent = `Bath: ${(Number(coreInput.value) || 0) + (Number(offsetInput.value) || 0)} °C`;
+    const p = presets.find((x) => x.name === select.value);
+    if (p) estimate.update(p.protein, Number(coreInput.value) || 0, Number(thickInput.value) || 5);
   };
   const choose = () => {
     const p = presets.find((x) => x.name === select.value);
@@ -1009,7 +1045,7 @@ async function openSousVide() {
     updateBath();
   };
   select.addEventListener("change", choose);
-  for (const input of [coreInput, offsetInput]) input.addEventListener("input", updateBath);
+  for (const input of [coreInput, offsetInput, thickInput]) input.addEventListener("input", updateBath);
   choose();
   // Manual mode is the cooker as a plain water heater: nothing here is tracked for pasteurisation
   const bathInput = number(20, 90, 0.5), hoursInput = number(0, 24, 1), minsInput = number(0, 59, 5);
@@ -1057,6 +1093,7 @@ async function openSousVide() {
       field("Thickness", thickInput, "mm"),
       field("Bath offset", offsetInput, "°C"),
       bath,
+      estimate.node,
       about,
     ),
     sousVideControls(() => ({
