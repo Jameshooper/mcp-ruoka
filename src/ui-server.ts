@@ -101,9 +101,13 @@ const ManualBodySchema = z.union([
 ]);
 
 // Either a saved recipe, or a preset with the cook's adjustments (thickness of the actual cut)
+// meater: false times the cook from Baldwin's table in Home Assistant instead of the probe
 const SousVideStartBodySchema = z.union([
-	z.object({ recipe: z.string().min(1).max(200) }),
-	SousVideOverridesSchema.extend({ preset: z.string().min(1).max(60) }),
+	z.object({ recipe: z.string().min(1).max(200), meater: z.boolean().optional() }),
+	SousVideOverridesSchema.extend({
+		preset: z.string().min(1).max(60),
+		meater: z.boolean().optional(),
+	}),
 ]);
 
 const KindleUrlBodySchema = z.object({ url: z.string().min(1).max(2000) });
@@ -395,13 +399,13 @@ async function routeUiRequest(req: Request): Promise<Response> {
 			if (!recipe.sousVide) return json({ error: "This recipe has no sous vide settings" }, 400);
 			settings = resolveSousVide({ recipe: recipe.sousVide });
 		} else {
-			const { preset: presetName, ...overrides } = body.data;
+			const { preset: presetName, meater: _meater, ...overrides } = body.data;
 			const preset = findPreset(presetName);
 			if (!preset) return json({ error: "Preset not found" }, 404);
 			settings = resolveSousVide({ preset }, overrides);
 		}
 		if ("error" in settings) return json(settings, 400);
-		const started = await startCook(settings);
+		const started = await startCook(settings, body.data.meater ?? true);
 		return started.ok ? json({ started: true, ...settings }) : json({ error: started.error }, 502);
 	}
 

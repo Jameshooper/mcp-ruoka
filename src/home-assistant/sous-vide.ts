@@ -12,6 +12,8 @@ export const STOP_SCRIPT = "script.sous_vide_stop";
 // and, optionally, how long it runs. Home Assistant switches the cooker off when the timer ends,
 // so the app does not need to stay open.
 export const MANUAL_TIMER = "timer.sous_vide_manual_timer";
+// Without the MEATER the cook script times the cook from Baldwin's table with this timer
+export const TABLE_TIMER = "timer.sous_vide_table_timer";
 const BATH_NUMBER = "number.sous_vide_set_temperature";
 const COOKER_SWITCH = "switch.isv_100w2_0_sous_vide_running";
 
@@ -98,6 +100,7 @@ async function readState(entityId: string, options: PublishOptions): Promise<str
 // whole time the water heats
 export function startCook(
 	settings: SousVideSettings,
+	meater = true,
 	options: PublishOptions = {},
 ): Promise<PublishResult> {
 	return callService(
@@ -110,6 +113,7 @@ export function startCook(
 				thickness: settings.thicknessMm,
 				core_temperature: settings.coreTempC,
 				bath_offset: settings.bathOffsetC,
+				meater,
 			},
 		},
 		options,
@@ -175,6 +179,12 @@ export interface CookStatus {
 	plannedBathMinutes: number | null;
 	plannedFinish: string | null;
 	timerEndsAt: string | null;
+	tableTimerEndsAt: string | null;
+}
+
+function endsAt(timer: z.infer<typeof StateSchema> | null): string | null {
+	const finishesAt = timer?.attributes?.finishes_at;
+	return timer?.state === "active" && typeof finishesAt === "string" ? finishesAt : null;
 }
 
 export async function cookStatus(
@@ -182,11 +192,11 @@ export async function cookStatus(
 ): Promise<CookStatus | { error: string }> {
 	if (!token(options)) return { error: "Not running inside Home Assistant" };
 	const entries = Object.entries(STATUS_ENTITIES);
-	const [values, timer] = await Promise.all([
+	const [values, timer, tableTimer] = await Promise.all([
 		Promise.all(entries.map(([, entityId]) => readState(entityId, options))),
 		readEntity(MANUAL_TIMER, options),
+		readEntity(TABLE_TIMER, options),
 	]);
-	const finishesAt = timer?.attributes?.finishes_at;
 	const s: Record<string, string | null> = {};
 	entries.forEach(([key], i) => {
 		s[key] = values[i] ?? null;
@@ -211,6 +221,7 @@ export async function cookStatus(
 		fsaiHoldRemainingMin: num(s.fsaiRemaining ?? null),
 		plannedBathMinutes: num(s.plannedMinutes ?? null),
 		plannedFinish: s.plannedFinish ?? null,
-		timerEndsAt: timer?.state === "active" && typeof finishesAt === "string" ? finishesAt : null,
+		timerEndsAt: endsAt(timer),
+		tableTimerEndsAt: endsAt(tableTimer),
 	};
 }
