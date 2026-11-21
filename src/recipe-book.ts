@@ -11,6 +11,7 @@ import {
 	StoredIngredientSchema,
 	StoredNutritionSchema,
 } from "./schemas.ts";
+import { SousVideSchema } from "./sous-vide.ts";
 
 export const RecipeInputSchema = z.object({
 	name: z.string().min(1).max(120),
@@ -45,6 +46,7 @@ export const RecipeInputSchema = z.object({
 		.describe("True when the meal includes vegetables or a salad (in the dish or as a side)"),
 	nutrition: NutritionSchema.optional(),
 	estimatedCost: EstimatedCostSchema.optional(),
+	sousVide: SousVideSchema.optional(),
 	notes: z.string().max(2000).optional(),
 });
 
