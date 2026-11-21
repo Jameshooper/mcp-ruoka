@@ -1,9 +1,16 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { cookStatus, startCook, stopCook } from "../home-assistant/sous-vide.ts";
+import {
+	cookStatus,
+	startCook,
+	startManual,
+	stopCook,
+	stopManual,
+} from "../home-assistant/sous-vide.ts";
 import { findRecipe } from "../recipe-book.ts";
 import {
 	findPreset,
+	ManualBathSchema,
 	resolveSousVide,
 	SOUS_VIDE_PRESETS,
 	SousVideOverridesSchema,
@@ -77,14 +84,34 @@ export function registerSousVideTools(server: McpServer): void {
 	);
 
 	server.registerTool(
+		"set_sous_vide_bath",
+		{
+			description:
+				"Manual control: set the INKBIRD water to a temperature and switch it on, optionally for a number of minutes after which Home Assistant switches it off (with a 5-minute warning). This is NOT tracked for pasteurisation: use it for eggs, fish below 55 °C, warming water or anything the cook asks for directly, and say clearly that food cooked this way is not confirmed pasteurised. For meat, poultry or fish that should be pasteurised, use start_sous_vide instead. Only call this when the cook asks, and remind them the pot needs water.",
+			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+			inputSchema: ManualBathSchema,
+		},
+		async ({ bathC, minutes }) => {
+			const result = await startManual(bathC, minutes);
+			if (!result.ok) return failure(`Could not set the bath: ${result.error}`);
+			return text({
+				bathC,
+				minutes: minutes ?? null,
+				switchesOffAt: minutes ? new Date(Date.now() + minutes * 60_000).toISOString() : null,
+				pasteurisationTracked: false,
+			});
+		},
+	);
+
+	server.registerTool(
 		"stop_sous_vide",
 		{
 			description:
-				"Switch the INKBIRD off and cancel a cook that is still heating the water. Only call this when the cook asks.",
+				"Switch the INKBIRD off, cancel a cook that is still heating the water, and cancel a manual timer. Only call this when the cook asks.",
 			annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
 		},
 		async () => {
-			const stopped = await stopCook();
+			const [stopped] = await Promise.all([stopCook(), stopManual()]);
 			return stopped.ok ? text({ stopped: true }) : failure(`Could not stop: ${stopped.error}`);
 		},
 	);

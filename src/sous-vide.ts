@@ -232,3 +232,21 @@ export function resolveSousVide(
 		finish: base.recipe?.finish ?? preset?.finish ?? null,
 	};
 }
+
+// Manual mode: the cooker as a plain water heater, for things that are not pasteurised (eggs,
+// fish below 55 °C, warming water). Limits match the INKBIRD entity in Home Assistant.
+export const ManualBathSchema = z.object({
+	bathC: z
+		.number()
+		.min(20)
+		.max(90)
+		.multipleOf(0.5)
+		.describe("Water temperature in °C (20-90, in 0.5 steps)"),
+	minutes: z
+		.number()
+		.int()
+		.min(1)
+		.max(1440)
+		.optional()
+		.describe("Switch the cooker off after this many minutes; leave out to keep it running"),
+});
