@@ -230,8 +230,8 @@ h1 { font-family: var(--serif); font-size: 38px; line-height: 1.08; font-weight:
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  min-width: 124px;
-  padding: 8px 18px 7px;
+  min-width: 96px;
+  padding: 8px 14px 7px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
@@ -612,6 +612,7 @@ label.line .meta { font-size: 14px; }
   </div>
   <div id="plan-detail-view" class="hidden"></div>
   <div id="backup-view" class="hidden"></div>
+  <div id="sousvide-view" class="hidden"></div>
 </main>
 
 <nav class="tabbar glass" aria-label="Sections">
@@ -622,6 +623,10 @@ label.line .meta { font-size: 14px; }
   <button type="button" id="tab-plans">
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
     Meal plans
+  </button>
+  <button type="button" id="tab-sousvide">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11h16v5.5A3.5 3.5 0 0 1 16.5 20h-9A3.5 3.5 0 0 1 4 16.5z"/><path d="M2.5 11h19"/><path d="M9 3.5c0 1.2 1 1.6 1 2.8M13.5 3.5c0 1.2 1 1.6 1 2.8"/></svg>
+    Sous vide
   </button>
 </nav>
 
@@ -884,12 +889,9 @@ const SOUS_VIDE_STAGE = {
   unknown: "Unknown",
 };
 
-// Home Assistant runs the cook and decides when the food is safe; this card only starts or stops
-// it and shows what Home Assistant reports, polling while the recipe stays open.
-function sousVideCard(recipe) {
-  const sv = recipe.sousVide;
-  if (!sv) return null;
-  const offset = sv.bathOffsetC ?? 1;
+// Home Assistant runs the cook and decides when the food is safe; these controls only start or
+// stop it and show what Home Assistant reports, polling while they stay on screen.
+function sousVideControls(startBody) {
   const cell = (label) => {
     const value = el("b", {}, "–");
     return { value, node: el("div", { class: "macro" }, value, el("small", {}, label)) };
@@ -897,13 +899,6 @@ function sousVideCard(recipe) {
   const water = cell("water"), core = cell("core"), done = cell("pasteurised"), finish = cell("planned finish");
   const stage = el("div", { class: "meta" }, "");
   const note = el("span", { class: "meta" });
-  const card = el("div", {},
-    el("h3", {}, "♨️ Sous vide"),
-    el("div", { class: "meta" }, [sv.preset, SOUS_VIDE_PROTEIN[sv.protein], `core ${sv.coreTempC} °C`, `bath ${sv.coreTempC + offset} °C`, `${sv.thicknessMm} mm`].filter(Boolean).join(" · ")),
-    sv.finish ? el("div", { class: "meta" }, `Finish: ${sv.finish}`) : null,
-    el("div", { class: "macros", style: "grid-template-columns: repeat(4, 1fr)" }, water.node, core.node, done.node, finish.node),
-    stage,
-  );
   const show = (s) => {
     water.value.textContent = s.waterC === null ? "–" : `${s.waterC} °C`;
     core.value.textContent = s.coreC === null ? "–" : `${s.coreC} °C`;
@@ -912,8 +907,34 @@ function sousVideCard(recipe) {
     finish.value.textContent = at && s.stage !== "idle" && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "–";
     stage.textContent = SOUS_VIDE_STAGE[s.stage] || s.stage;
   };
+  const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const node = el("div", {},
+    el("div", { class: "macros", style: "grid-template-columns: repeat(4, 1fr)" }, water.node, core.node, done.node, finish.node),
+    stage,
+    el("div", { class: "row" },
+      el("button", { type: "button", class: "btn primary", onclick: async () => {
+        if (!confirm("Start the sous vide? Make sure the pot has water in it.")) return;
+        try {
+          const r = await post("api/sous-vide/start", startBody());
+          note.textContent = `Heating to ${r.coreTempC + r.bathOffsetC} °C. Your phone will say when to drop the bags in and start the MEATER.`;
+        } catch (error) {
+          note.textContent = `Could not start: ${error.message}`;
+        }
+      } }, "▶ Start sous vide"),
+      el("button", { type: "button", class: "btn", onclick: async () => {
+        try {
+          await post("api/sous-vide/stop", {});
+          note.textContent = "Cooker switched off";
+        } catch (error) {
+          note.textContent = `Could not stop: ${error.message}`;
+        }
+      } }, "⏹ Stop"),
+      note,
+    ),
+    el("div", { class: "macros-note" }, "The MEATER decides when it's safe, not the clock."),
+  );
   const refresh = async () => {
-    if (!card.isConnected) return;
+    if (!node.isConnected) return;
     try {
       show(await api("api/sous-vide/status"));
     } catch (error) {
@@ -921,30 +942,79 @@ function sousVideCard(recipe) {
     }
     setTimeout(refresh, 15000);
   };
-  const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  card.append(el("div", { class: "row" },
-    el("button", { type: "button", onclick: async () => {
-      if (!confirm("Start the sous vide? Make sure the pot has water in it.")) return;
-      try {
-        const r = await post("api/sous-vide/start", { recipe: recipe.id });
-        note.textContent = `Heating to ${r.coreTempC + r.bathOffsetC} °C. Your phone will say when to drop the bags in and start the MEATER.`;
-      } catch (error) {
-        note.textContent = `Could not start: ${error.message}`;
-      }
-    } }, "▶ Start sous vide"),
-    el("button", { type: "button", onclick: async () => {
-      try {
-        await post("api/sous-vide/stop", {});
-        note.textContent = "Cooker switched off";
-      } catch (error) {
-        note.textContent = `Could not stop: ${error.message}`;
-      }
-    } }, "⏹ Stop"),
-    note,
-  ));
-  card.append(el("div", { class: "macros-note" }, "The MEATER decides when it's safe, not the clock."));
   setTimeout(refresh, 0);
-  return card;
+  return node;
+}
+
+function sousVideCard(recipe) {
+  const sv = recipe.sousVide;
+  if (!sv) return null;
+  const offset = sv.bathOffsetC ?? 1;
+  return el("div", {},
+    el("h3", {}, "♨️ Sous vide"),
+    el("div", { class: "meta" }, [sv.preset, SOUS_VIDE_PROTEIN[sv.protein], `core ${sv.coreTempC} °C`, `bath ${sv.coreTempC + offset} °C`, `${sv.thicknessMm} mm`].filter(Boolean).join(" · ")),
+    sv.finish ? el("div", { class: "meta" }, `Finish: ${sv.finish}`) : null,
+    sousVideControls(() => ({ recipe: recipe.id })),
+  );
+}
+
+// A cook without a saved recipe: pick a preset, adjust it to the cut in the bag, start
+async function openSousVide() {
+  tab = "sousvide";
+  show("sousvide-view");
+  $("subtitle").textContent = "Quick cook from a preset";
+  const view = $("sousvide-view");
+  let presets = [];
+  try {
+    presets = (await api("api/sous-vide/presets")).presets;
+  } catch (error) {
+    view.replaceChildren(el("div", { class: "empty" }, `Could not load presets: ${error.message}`));
+    return;
+  }
+  const number = (min, max, step) => el("input", { type: "number", min: String(min), max: String(max), step: String(step), inputmode: "decimal" });
+  const select = el("select", {}, presets.map((p) => el("option", { value: p.name }, p.name)));
+  const coreInput = number(55, 75, 0.5), thickInput = number(5, 70, 5), offsetInput = number(0, 2.5, 0.5);
+  const about = el("div", { class: "meta" });
+  const bath = el("div", { class: "meta" });
+  const field = (label, input, unit) => el("label", { class: "row" }, el("span", { class: "meta" }, label), input, el("span", { class: "meta" }, unit));
+  const updateBath = () => {
+    bath.textContent = `Bath: ${(Number(coreInput.value) || 0) + (Number(offsetInput.value) || 0)} °C`;
+  };
+  const choose = () => {
+    const p = presets.find((x) => x.name === select.value);
+    if (!p) return;
+    coreInput.value = p.coreTempC;
+    thickInput.value = p.thicknessMm;
+    offsetInput.value = p.bathOffsetC;
+    about.replaceChildren(
+      el("div", {}, `${SOUS_VIDE_PROTEIN[p.protein]} · ${p.note}`),
+      el("div", {}, `Finish: ${p.finish}`),
+      el("div", { class: "macros-note" }, `Source: ${p.source}`),
+    );
+    updateBath();
+  };
+  select.addEventListener("change", choose);
+  for (const input of [coreInput, offsetInput]) input.addEventListener("input", updateBath);
+  choose();
+  view.replaceChildren(
+    el("div", { class: "starter" },
+      el("h2", {}, "♨️ Quick sous vide"),
+      el("div", { class: "meta" }, "Pick what's in the bag, set the thickness of the thickest piece, and start."),
+      field("Preset", select, ""),
+      field("Core", coreInput, "°C"),
+      field("Thickness", thickInput, "mm"),
+      field("Bath offset", offsetInput, "°C"),
+      bath,
+      about,
+    ),
+    sousVideControls(() => ({
+      preset: select.value,
+      coreTempC: Number(coreInput.value),
+      thicknessMm: Math.round(Number(thickInput.value)),
+      bathOffsetC: Number(offsetInput.value),
+    })),
+  );
+  window.scrollTo(0, 0);
 }
 
 function cookLink(meal, known) {
@@ -1072,16 +1142,17 @@ function backButton(label, onclick) {
 }
 
 function show(viewId) {
-  for (const id of ["list-view", "detail-view", "plans-view", "plan-detail-view", "backup-view"]) {
+  for (const id of ["list-view", "detail-view", "plans-view", "plan-detail-view", "backup-view", "sousvide-view"]) {
     $(id).classList.toggle("hidden", id !== viewId);
   }
   const shown = $(viewId);
   shown.classList.remove("entering");
   void shown.offsetWidth;
   shown.classList.add("entering");
-  $("title").textContent = tab === "plans" ? "Meal plans" : "Recipes";
+  $("title").textContent = tab === "plans" ? "Meal plans" : tab === "sousvide" ? "Sous vide" : "Recipes";
   $("tab-recipes").classList.toggle("active", tab === "recipes");
   $("tab-plans").classList.toggle("active", tab === "plans");
+  $("tab-sousvide").classList.toggle("active", tab === "sousvide");
   // The large title belongs to the list screens; detail screens use their own heading
   document.querySelector(".largetitle").classList.toggle("hidden", viewId.endsWith("detail-view") || viewId === "backup-view");
 }
@@ -1758,6 +1829,7 @@ function closeBackup() {
 $("backup-open").addEventListener("click", openBackup);
 
 $("tab-recipes").addEventListener("click", closeDetail);
+$("tab-sousvide").addEventListener("click", openSousVide);
 $("tab-plans").addEventListener("click", async () => {
   tab = "plans";
   show("plans-view");

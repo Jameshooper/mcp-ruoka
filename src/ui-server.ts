@@ -37,7 +37,12 @@ import {
 	scaleRecipe,
 } from "./recipe-book.ts";
 import { ImportModeSchema } from "./schemas.ts";
-import { resolveSousVide } from "./sous-vide.ts";
+import {
+	findPreset,
+	resolveSousVide,
+	SOUS_VIDE_PRESETS,
+	SousVideOverridesSchema,
+} from "./sous-vide.ts";
 import { getStoreNames } from "./store-names.ts";
 import { IMPORT_TAG, webRecipeToInput } from "./web-import.ts";
 import { fetchWebRecipe, type WebFetch, WebRecipeError } from "./web-recipe.ts";
@@ -83,7 +88,11 @@ const KindleOpenBodySchema = z.object({
 	servings: z.number().int().positive().max(100).optional(),
 });
 
-const SousVideStartBodySchema = z.object({ recipe: z.string().min(1).max(200) });
+// Either a saved recipe, or a preset with the cook's adjustments (thickness of the actual cut)
+const SousVideStartBodySchema = z.union([
+	z.object({ recipe: z.string().min(1).max(200) }),
+	SousVideOverridesSchema.extend({ preset: z.string().min(1).max(60) }),
+]);
 
 const KindleUrlBodySchema = z.object({ url: z.string().min(1).max(2000) });
 
@@ -332,6 +341,10 @@ async function routeUiRequest(req: Request): Promise<Response> {
 		return json(kindleStatus());
 	}
 
+	if (path === "/api/sous-vide/presets" && req.method === "GET") {
+		return json({ presets: SOUS_VIDE_PRESETS });
+	}
+
 	if (path === "/api/sous-vide/status" && req.method === "GET") {
 		const status = await cookStatus();
 		return "error" in status ? json(status, 503) : json(status);
@@ -351,10 +364,18 @@ async function routeUiRequest(req: Request): Promise<Response> {
 		}
 		const body = SousVideStartBodySchema.safeParse(await req.json().catch(() => null));
 		if (!body.success) return json({ error: "Invalid request" }, 400);
-		const recipe = await findRecipe(body.data.recipe);
-		if (!recipe) return json({ error: "Recipe not found" }, 404);
-		if (!recipe.sousVide) return json({ error: "This recipe has no sous vide settings" }, 400);
-		const settings = resolveSousVide({ recipe: recipe.sousVide });
+		let settings: ReturnType<typeof resolveSousVide>;
+		if ("recipe" in body.data) {
+			const recipe = await findRecipe(body.data.recipe);
+			if (!recipe) return json({ error: "Recipe not found" }, 404);
+			if (!recipe.sousVide) return json({ error: "This recipe has no sous vide settings" }, 400);
+			settings = resolveSousVide({ recipe: recipe.sousVide });
+		} else {
+			const { preset: presetName, ...overrides } = body.data;
+			const preset = findPreset(presetName);
+			if (!preset) return json({ error: "Preset not found" }, 404);
+			settings = resolveSousVide({ preset }, overrides);
+		}
 		if ("error" in settings) return json(settings, 400);
 		const started = await startCook(settings);
 		return started.ok ? json({ started: true, ...settings }) : json({ error: started.error }, 502);

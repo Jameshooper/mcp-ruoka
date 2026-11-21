@@ -753,3 +753,27 @@ test("sous vide routes refuse unsafe requests and start only recipes with settin
 	expect((await handleUiRequest(new Request("http://x/api/sous-vide/status"))).status).toBe(503);
 	if (saved !== undefined) process.env.SUPERVISOR_TOKEN = saved;
 });
+
+test("sous vide presets are listed and a preset can be started with adjustments", async () => {
+	const { handleUiRequest } = await import("./ui-server.ts");
+	const list = await handleUiRequest(new Request("http://x/api/sous-vide/presets"));
+	const presets = z
+		.object({ presets: z.array(z.object({ name: z.string() })) })
+		.parse(await list.json());
+	expect(presets.presets.map((p) => p.name)).toContain("Chicken breast");
+
+	const post = (body: unknown) =>
+		handleUiRequest(
+			new Request("http://x/api/sous-vide/start", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			}),
+		);
+	expect((await post({ preset: "Tofu" })).status).toBe(404);
+	expect((await post({ preset: "Chicken breast", coreTempC: 40 })).status).toBe(400);
+	const saved = process.env.SUPERVISOR_TOKEN;
+	delete process.env.SUPERVISOR_TOKEN;
+	expect((await post({ preset: "Chicken breast", thicknessMm: 32 })).status).toBe(502);
+	if (saved !== undefined) process.env.SUPERVISOR_TOKEN = saved;
+});
