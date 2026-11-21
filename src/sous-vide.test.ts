@@ -1,7 +1,14 @@
 import { expect, test } from "bun:test";
-import { cookStatus, startCook, stopCook } from "./home-assistant/sous-vide.ts";
+import {
+	cookStatus,
+	startCook,
+	startManual,
+	stopCook,
+	stopManual,
+} from "./home-assistant/sous-vide.ts";
 import {
 	findPreset,
+	ManualBathSchema,
 	resolveSousVide,
 	roundThicknessUp,
 	SOUS_VIDE_PRESETS,
@@ -127,4 +134,46 @@ test("status reads the cook back and treats unavailable as unknown", async () =>
 		cookerOn: true,
 		plannedFinish: null,
 	});
+});
+
+test("manual mode sets the water, switches on and starts or cancels the timer", async () => {
+	const calls: Array<{ url: string; body: unknown }> = [];
+	const fetchFn = Object.assign(
+		async (url: string | URL | Request, init?: RequestInit) => {
+			calls.push({
+				url: String(url).replace("http://supervisor/core/api/services/", ""),
+				body: JSON.parse(String(init?.body)),
+			});
+			return new Response("[]");
+		},
+		{ preconnect: () => {} },
+	);
+	expect(await startManual(45.5, 90, { token: "t", fetchFn })).toEqual({ ok: true });
+	expect(calls).toEqual([
+		{
+			url: "number/set_value",
+			body: { entity_id: "number.sous_vide_set_temperature", value: 45.5 },
+		},
+		{ url: "switch/turn_on", body: { entity_id: "switch.isv_100w2_0_sous_vide_running" } },
+		{
+			url: "timer/start",
+			body: { entity_id: "timer.sous_vide_manual_timer", duration: "01:30:00" },
+		},
+	]);
+	calls.length = 0;
+	await startManual(60, undefined, { token: "t", fetchFn });
+	expect(calls[2]).toEqual({
+		url: "timer/cancel",
+		body: { entity_id: "timer.sous_vide_manual_timer" },
+	});
+	calls.length = 0;
+	await stopManual({ token: "t", fetchFn });
+	expect(calls.map((c) => c.url)).toEqual(["timer/cancel", "switch/turn_off"]);
+});
+
+test("manual limits follow the cooker", () => {
+	expect(ManualBathSchema.safeParse({ bathC: 45.5, minutes: 90 }).success).toBe(true);
+	expect(ManualBathSchema.safeParse({ bathC: 95 }).success).toBe(false);
+	expect(ManualBathSchema.safeParse({ bathC: 45.3 }).success).toBe(false);
+	expect(ManualBathSchema.safeParse({ bathC: 60, minutes: 0 }).success).toBe(false);
 });

@@ -777,3 +777,23 @@ test("sous vide presets are listed and a preset can be started with adjustments"
 	expect((await post({ preset: "Chicken breast", thicknessMm: 32 })).status).toBe(502);
 	if (saved !== undefined) process.env.SUPERVISOR_TOKEN = saved;
 });
+
+test("manual sous vide route validates before touching the cooker", async () => {
+	const { handleUiRequest } = await import("./ui-server.ts");
+	const post = (body: unknown, contentType = "application/json") =>
+		handleUiRequest(
+			new Request("http://x/api/sous-vide/manual", {
+				method: "POST",
+				headers: { "Content-Type": contentType },
+				body: JSON.stringify(body),
+			}),
+		);
+	expect((await post({ on: true, bathC: 60 }, "text/plain")).status).toBe(415);
+	expect((await post({ on: true, bathC: 120 })).status).toBe(400);
+	expect((await post({ on: true })).status).toBe(400);
+	const saved = process.env.SUPERVISOR_TOKEN;
+	delete process.env.SUPERVISOR_TOKEN;
+	expect((await post({ on: true, bathC: 60, minutes: 30 })).status).toBe(502);
+	expect((await post({ on: false })).status).toBe(502);
+	if (saved !== undefined) process.env.SUPERVISOR_TOKEN = saved;
+});
