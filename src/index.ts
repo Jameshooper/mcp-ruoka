@@ -17,6 +17,7 @@ import { registerPlanBookTools } from "./tools/plan-book.ts";
 import { registerRecipeTool } from "./tools/recipe.ts";
 import { registerRecipeBookTools } from "./tools/recipe-book.ts";
 import { registerSearchTool } from "./tools/search.ts";
+import { registerSousVideTools } from "./tools/sous-vide.ts";
 import { registerStoresTool } from "./tools/stores.ts";
 import { startStandaloneUi, startUiServer } from "./ui-server.ts";
 
@@ -35,6 +36,7 @@ function createServer(): McpServer {
 	registerRecipeBookTools(server);
 	registerMealPlanTool(server);
 	registerPlanBookTools(server);
+	registerSousVideTools(server);
 	return server;
 }
 
