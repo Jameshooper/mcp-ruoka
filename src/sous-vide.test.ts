@@ -85,13 +85,20 @@ test("starting a cook turns the script on with Home Assistant's protein names", 
 			preset: null,
 			finish: null,
 		},
+		true,
 		{ token: "t", fetchFn },
 	);
 	expect(result).toEqual({ ok: true });
 	expect(calls[0]?.url).toBe("http://supervisor/core/api/services/script/turn_on");
 	expect(calls[0]?.body).toEqual({
 		entity_id: "script.sous_vide_cook",
-		variables: { protein: "Fatty fish", thickness: 25, core_temperature: 57, bath_offset: 0.5 },
+		variables: {
+			protein: "Fatty fish",
+			thickness: 25,
+			core_temperature: 57,
+			bath_offset: 0.5,
+			meater: true,
+		},
 	});
 
 	await stopCook({ token: "t", fetchFn });
@@ -176,4 +183,28 @@ test("manual limits follow the cooker", () => {
 	expect(ManualBathSchema.safeParse({ bathC: 95 }).success).toBe(false);
 	expect(ManualBathSchema.safeParse({ bathC: 45.3 }).success).toBe(false);
 	expect(ManualBathSchema.safeParse({ bathC: 60, minutes: 0 }).success).toBe(false);
+});
+
+test("a cook without the MEATER tells the script to time it from the table", async () => {
+	const bodies: unknown[] = [];
+	const fetchFn = Object.assign(
+		async (_url: string | URL | Request, init?: RequestInit) => {
+			bodies.push(JSON.parse(String(init?.body)));
+			return new Response("[]");
+		},
+		{ preconnect: () => {} },
+	);
+	await startCook(
+		{
+			protein: "poultry",
+			coreTempC: 63,
+			thicknessMm: 25,
+			bathOffsetC: 1,
+			preset: null,
+			finish: null,
+		},
+		false,
+		{ token: "t", fetchFn },
+	);
+	expect(bodies[0]).toMatchObject({ variables: { meater: false, protein: "Poultry" } });
 });

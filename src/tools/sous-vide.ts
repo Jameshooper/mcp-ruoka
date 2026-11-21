@@ -46,9 +46,15 @@ export function registerSousVideTools(server: McpServer): void {
 			inputSchema: SousVideOverridesSchema.extend({
 				recipe: z.string().min(1).max(120).optional().describe("Saved recipe id or name"),
 				preset: z.string().min(1).max(60).optional().describe("Preset name"),
+				meater: z
+					.boolean()
+					.optional()
+					.describe(
+						"False when the cook is not using the MEATER probe: Home Assistant then times the cook from Baldwin's table for the protein, thickness and temperature (plus 5 minutes to get the bags in), and refuses cuts outside the table. Default true.",
+					),
 			}),
 		},
-		async ({ recipe: recipeName, preset: presetName, ...overrides }) => {
+		async ({ recipe: recipeName, preset: presetName, meater, ...overrides }) => {
 			const recipe = recipeName ? await findRecipe(recipeName) : undefined;
 			if (recipeName && !recipe) return failure(`No saved recipe matches "${recipeName}".`);
 			const preset = presetName ? findPreset(presetName) : undefined;
@@ -59,14 +65,18 @@ export function registerSousVideTools(server: McpServer): void {
 			}
 			const settings = resolveSousVide({ preset, recipe: recipe?.sousVide }, overrides);
 			if ("error" in settings) return failure(settings.error);
-			const started = await startCook(settings);
+			const started = await startCook(settings, meater ?? true);
 			if (!started.ok) return failure(`Could not start the cook: ${started.error}`);
 			return text({
 				started: true,
 				recipe: recipe?.name ?? null,
 				...settings,
 				bathC: settings.coreTempC + settings.bathOffsetC,
-				next: "Heating the water; Home Assistant will notify the phone when to drop the bags in and start the MEATER.",
+				meater: meater ?? true,
+				next:
+					meater === false
+						? "Heating the water; when it is ready Home Assistant tells the phone to drop the bags in and starts a timer from Baldwin's table. That time assumes thawed, fridge-cold food and the thickness given; no probe confirms it."
+						: "Heating the water; Home Assistant will notify the phone when to drop the bags in and start the MEATER.",
 			});
 		},
 	);

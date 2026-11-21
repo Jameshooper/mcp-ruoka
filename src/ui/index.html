@@ -903,21 +903,36 @@ function sousVideControls(startBody, onStatus) {
     water.value.textContent = s.waterC === null ? "–" : `${s.waterC} °C`;
     core.value.textContent = s.coreC === null ? "–" : `${s.coreC} °C`;
     done.value.textContent = s.pasteurisedPercent === null ? "–" : `${Math.min(100, Math.round(s.pasteurisedPercent))} %`;
-    const at = s.plannedFinish ? new Date(s.plannedFinish.replace(" ", "T")) : null;
-    finish.value.textContent = at && s.stage !== "idle" && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "–";
-    stage.textContent = SOUS_VIDE_STAGE[s.stage] || s.stage;
+    // A table-timed cook (no MEATER) ends when its timer does; a probe cook has the planned finish
+    const at = s.tableTimerEndsAt ? new Date(s.tableTimerEndsAt) : s.plannedFinish && s.stage !== "idle" ? new Date(s.plannedFinish.replace(" ", "T")) : null;
+    finish.value.textContent = at && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "–";
+    stage.textContent = s.tableTimerEndsAt ? "Timed from Baldwin's table (no MEATER)" : SOUS_VIDE_STAGE[s.stage] || s.stage;
     if (onStatus) onStatus(s);
   };
   const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const meaterBox = el("input", { type: "checkbox" });
+  meaterBox.checked = true;
+  const meaterHelp = el("div", { class: "macros-note" }, "");
+  const explainMeater = () => {
+    meaterHelp.textContent = meaterBox.checked
+      ? "The MEATER decides when it's safe, not the clock."
+      : "No MEATER: the time comes from Baldwin's table for what you picked, assuming thawed, fridge-cold food and the right thickness. Nothing confirms it.";
+  };
+  meaterBox.addEventListener("change", explainMeater);
+  explainMeater();
   const node = el("div", {},
     el("div", { class: "macros", style: "grid-template-columns: repeat(4, 1fr)" }, water.node, core.node, done.node, finish.node),
     stage,
+    el("label", { class: "row" }, meaterBox, el("span", { class: "meta" }, "Using the MEATER")),
+    meaterHelp,
     el("div", { class: "row" },
       el("button", { type: "button", class: "btn primary", onclick: async () => {
         if (!confirm("Start the sous vide? Make sure the pot has water in it.")) return;
         try {
-          const r = await post("api/sous-vide/start", startBody());
-          note.textContent = `Heating to ${r.coreTempC + r.bathOffsetC} °C. Your phone will say when to drop the bags in and start the MEATER.`;
+          const r = await post("api/sous-vide/start", { ...startBody(), meater: meaterBox.checked });
+          note.textContent = meaterBox.checked
+            ? `Heating to ${r.coreTempC + r.bathOffsetC} °C. Your phone will say when to drop the bags in and start the MEATER.`
+            : `Heating to ${r.coreTempC + r.bathOffsetC} °C. When the water is ready your phone says to drop the bags in, and the timer starts from Baldwin's table.`;
         } catch (error) {
           note.textContent = `Could not start: ${error.message}`;
         }
@@ -932,7 +947,6 @@ function sousVideControls(startBody, onStatus) {
       } }, "⏹ Stop"),
       note,
     ),
-    el("div", { class: "macros-note" }, "The MEATER decides when it's safe, not the clock."),
   );
   const refresh = async () => {
     if (!node.isConnected) return;
