@@ -964,26 +964,42 @@ function sousVideControls(startBody, onStatus) {
 function minutesText(m) {
   if (m < 60) return `${m} min`;
   const h = Math.floor(m / 60), rest = m % 60;
-  return rest ? `${h} h ${rest} min` : `${h} h`;
+  return rest ? `${h} h ${rest}` : `${h} h`;
 }
 
-// Baldwin's table times for what is selected: the bath from fridge-cold, and the ice bath to 5 °C
-function estimateLine() {
-  const node = el("div", { class: "meta" }, "");
+// Three tiles for what is selected: the bath temperature, Baldwin's table time in the bath from
+// fridge-cold, and the ice-bath time to 5 °C. Warnings sit on their own line under the tiles.
+function estimateTiles() {
+  const tile = (cls, label) => {
+    const value = el("b", {}, "–");
+    return { value, node: el("div", { class: `macro ${cls}` }, value, el("small", {}, label)) };
+  };
+  const bath = tile("fat", "bath"), cook = tile("kcal", "cook"), ice = tile("protein", "ice bath");
+  const warn = el("div", { class: "macros-note", style: "color: var(--red); font-weight: 600" }, "");
+  const foot = el("div", { class: "macros-note" }, "");
+  const node = el("div", { style: "margin-top: 12px" },
+    el("div", { class: "macros", style: "grid-template-columns: repeat(3, 1fr)" }, bath.node, cook.node, ice.node),
+    warn,
+    foot,
+  );
   let seq = 0;
-  const update = async (protein, coreTempC, thicknessMm) => {
+  const update = async (protein, coreTempC, thicknessMm, bathC) => {
+    bath.value.textContent = `${bathC} °C`;
     const mine = ++seq;
     try {
       const q = new URLSearchParams({ protein, coreTempC: String(coreTempC), thicknessMm: String(thicknessMm) });
       const e = await api(`api/sous-vide/estimate?${q}`);
       if (mine !== seq) return;
-      const cook = e.cookMinutes === null
-        ? "Cook time: outside Baldwin's table (MEATER only)"
-        : `Cook time: about ${minutesText(e.cookMinutes)} from fridge-cold`;
-      const cool = `Ice bath to 5 °C: about ${minutesText(e.coolMinutes)}${e.coolWithinFsai ? "" : " (longer than the FSAI 2 h limit: serve straight away or cut thinner)"}`;
-      node.replaceChildren(el("div", {}, `⏱️ ${cook}`), el("div", {}, `🧊 ${cool}`));
+      cook.value.textContent = e.cookMinutes === null ? "–" : minutesText(e.cookMinutes);
+      ice.value.textContent = minutesText(e.coolMinutes);
+      const warnings = [];
+      if (e.cookMinutes === null) warnings.push("Outside Baldwin's table: no cook time, use the MEATER");
+      if (!e.coolWithinFsai) warnings.push("Ice bath takes over 2 h (FSAI limit): serve straight away or cut thinner");
+      warn.textContent = warnings.join(" · ");
+      warn.classList.toggle("hidden", warnings.length === 0);
+      foot.textContent = "Cook time from fridge-cold · times from Baldwin's tables";
     } catch {
-      if (mine === seq) node.textContent = "";
+      if (mine === seq) foot.textContent = "Could not work out the times";
     }
   };
   return { node, update };
@@ -995,11 +1011,11 @@ function sousVideCard(recipe) {
   const offset = sv.bathOffsetC ?? 1;
   return el("div", {},
     el("h3", {}, "♨️ Sous vide"),
-    el("div", { class: "meta" }, [sv.preset, SOUS_VIDE_PROTEIN[sv.protein], `core ${sv.coreTempC} °C`, `bath ${sv.coreTempC + offset} °C`, `${sv.thicknessMm} mm`].filter(Boolean).join(" · ")),
+    el("div", { class: "meta" }, [sv.preset, SOUS_VIDE_PROTEIN[sv.protein], `core ${sv.coreTempC} °C`, `${sv.thicknessMm} mm`].filter(Boolean).join(" · ")),
     sv.finish ? el("div", { class: "meta" }, `Finish: ${sv.finish}`) : null,
     (() => {
-      const est = estimateLine();
-      est.update(sv.protein, sv.coreTempC, sv.thicknessMm);
+      const est = estimateTiles();
+      est.update(sv.protein, sv.coreTempC, sv.thicknessMm, sv.coreTempC + offset);
       return est.node;
     })(),
     sousVideControls(() => ({ recipe: recipe.id })),
@@ -1022,14 +1038,13 @@ async function openSousVide() {
   const number = (min, max, step) => el("input", { type: "number", min: String(min), max: String(max), step: String(step), inputmode: "decimal" });
   const select = el("select", {}, presets.map((p) => el("option", { value: p.name }, p.name)));
   const coreInput = number(55, 75, 0.5), thickInput = number(5, 70, 5), offsetInput = number(0, 2.5, 0.5);
-  const about = el("div", { class: "meta" });
-  const bath = el("div", { class: "meta" });
+  const about = el("div", { class: "meta", style: "margin-top: 10px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--label2) 25%, transparent)" });
   const field = (label, input, unit) => el("label", { class: "row" }, el("span", { class: "meta" }, label), input, el("span", { class: "meta" }, unit));
-  const estimate = estimateLine();
+  const estimate = estimateTiles();
   const updateBath = () => {
-    bath.textContent = `Bath: ${(Number(coreInput.value) || 0) + (Number(offsetInput.value) || 0)} °C`;
     const p = presets.find((x) => x.name === select.value);
-    if (p) estimate.update(p.protein, Number(coreInput.value) || 0, Number(thickInput.value) || 5);
+    const core = Number(coreInput.value) || 0;
+    if (p) estimate.update(p.protein, core, Number(thickInput.value) || 5, core + (Number(offsetInput.value) || 0));
   };
   const choose = () => {
     const p = presets.find((x) => x.name === select.value);
@@ -1038,9 +1053,9 @@ async function openSousVide() {
     thickInput.value = p.thicknessMm;
     offsetInput.value = p.bathOffsetC;
     about.replaceChildren(
-      el("div", {}, `${SOUS_VIDE_PROTEIN[p.protein]} · ${p.note}`),
-      el("div", {}, `Finish: ${p.finish}`),
-      el("div", { class: "macros-note" }, `Source: ${p.source}`),
+      el("div", {}, el("b", {}, SOUS_VIDE_PROTEIN[p.protein]), ` · ${p.note}`),
+      el("div", {}, el("b", {}, "Finish: "), p.finish),
+      el("div", { class: "macros-note", style: "text-align: left; margin: 6px 0 0" }, `Source: ${p.source}`),
     );
     updateBath();
   };
@@ -1092,7 +1107,6 @@ async function openSousVide() {
       field("Core", coreInput, "°C"),
       field("Thickness", thickInput, "mm"),
       field("Bath offset", offsetInput, "°C"),
-      bath,
       estimate.node,
       about,
     ),
