@@ -44,11 +44,13 @@ import {
 } from "./recipe-book.ts";
 import { ImportModeSchema } from "./schemas.ts";
 import {
+	estimateSousVide,
 	findPreset,
 	ManualBathSchema,
 	resolveSousVide,
 	SOUS_VIDE_PRESETS,
 	SousVideOverridesSchema,
+	SousVideProteinSchema,
 } from "./sous-vide.ts";
 import { getStoreNames } from "./store-names.ts";
 import { IMPORT_TAG, webRecipeToInput } from "./web-import.ts";
@@ -93,6 +95,12 @@ const CheckedBodySchema = z.object({ checked: z.array(z.string()).max(200) });
 const KindleOpenBodySchema = z.object({
 	recipe: z.string().min(1).max(200),
 	servings: z.number().int().positive().max(100).optional(),
+});
+
+const EstimateQuerySchema = z.object({
+	protein: SousVideProteinSchema,
+	coreTempC: z.coerce.number().min(20).max(90),
+	thicknessMm: z.coerce.number().min(1).max(200),
 });
 
 const ManualBodySchema = z.union([
@@ -355,6 +363,13 @@ async function routeUiRequest(req: Request): Promise<Response> {
 
 	if (path === "/api/kindle/status" && req.method === "GET") {
 		return json(kindleStatus());
+	}
+
+	if (path === "/api/sous-vide/estimate" && req.method === "GET") {
+		const query = EstimateQuerySchema.safeParse(Object.fromEntries(url.searchParams));
+		if (!query.success) return json({ error: "Invalid request" }, 400);
+		const { protein, coreTempC, thicknessMm } = query.data;
+		return json(estimateSousVide(protein, coreTempC, thicknessMm));
 	}
 
 	if (path === "/api/sous-vide/presets" && req.method === "GET") {
