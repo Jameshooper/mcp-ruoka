@@ -797,3 +797,15 @@ test("manual sous vide route validates before touching the cooker", async () => 
 	expect((await post({ on: false })).status).toBe(502);
 	if (saved !== undefined) process.env.SUPERVISOR_TOKEN = saved;
 });
+
+test("sous vide estimate route returns table times and rejects bad input", async () => {
+	const { handleUiRequest } = await import("./ui-server.ts");
+	const ok = await handleUiRequest(
+		new Request("http://x/api/sous-vide/estimate?protein=poultry&coreTempC=63&thicknessMm=25"),
+	);
+	expect(await ok.json()).toEqual({ cookMinutes: 75, coolMinutes: 50, coolWithinFsai: true });
+	const bad = await handleUiRequest(
+		new Request("http://x/api/sous-vide/estimate?protein=tofu&coreTempC=63&thicknessMm=25"),
+	);
+	expect(bad.status).toBe(400);
+});

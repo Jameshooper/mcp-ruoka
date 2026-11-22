@@ -250,3 +250,86 @@ export const ManualBathSchema = z.object({
 		.optional()
 		.describe("Switch the cooker off after this many minutes; leave out to keep it running"),
 });
+
+// Douglas Baldwin, "A Practical Guide to Sous Vide Cooking": total minutes in the bath from 5 °C
+// fridge-cold for thicknesses 5-70 mm in 5 mm steps, keyed by bath temperature column (°C).
+// Tables 3.1 (lean and fatty fish), 4.1 (poultry) and 5.1 (beef, pork, lamb). Home Assistant holds
+// the same tables for the planned finish; these let the panel show the time while the cook edits.
+const BATH_MINUTES: Record<SousVideProtein, Record<number, readonly number[]>> = {
+	meat: {
+		55: [120, 120, 135, 150, 165, 180, 195, 210, 240, 270, 300, 315, 360, 390],
+		56: [75, 90, 105, 120, 135, 150, 165, 180, 195, 225, 255, 285, 315, 345],
+		57: [60, 75, 90, 105, 120, 120, 135, 150, 180, 195, 225, 255, 285, 315],
+		58: [45, 55, 75, 90, 105, 120, 120, 135, 165, 180, 210, 225, 255, 285],
+		59: [40, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 210, 240, 255],
+		60: [30, 40, 55, 75, 90, 90, 105, 120, 135, 150, 180, 195, 225, 240],
+		61: [25, 35, 50, 60, 75, 90, 105, 105, 135, 150, 165, 180, 210, 225],
+		62: [25, 30, 45, 55, 75, 90, 90, 105, 120, 135, 165, 180, 195, 225],
+		63: [18, 30, 40, 55, 75, 75, 90, 105, 120, 135, 150, 165, 195, 210],
+		64: [16, 25, 40, 50, 60, 75, 90, 90, 105, 120, 150, 165, 180, 195],
+		65: [14, 25, 35, 45, 55, 75, 75, 90, 105, 120, 135, 150, 180, 195],
+		66: [13, 25, 35, 45, 55, 75, 75, 90, 105, 120, 135, 150, 165, 195],
+	},
+	poultry: {
+		57: [135, 135, 150, 165, 180, 195, 225, 240, 270, 285, 315, 345, 375, 420],
+		58: [105, 105, 105, 120, 135, 165, 180, 195, 225, 255, 270, 300, 330, 360],
+		59: [75, 75, 90, 105, 120, 135, 150, 165, 195, 225, 240, 270, 300, 330],
+		60: [45, 55, 75, 75, 90, 120, 135, 150, 180, 195, 225, 255, 270, 300],
+		61: [35, 40, 50, 75, 90, 105, 120, 135, 165, 180, 210, 225, 255, 285],
+		62: [25, 35, 45, 55, 75, 90, 105, 120, 150, 165, 195, 210, 240, 270],
+		63: [18, 30, 40, 50, 75, 90, 105, 120, 135, 150, 180, 195, 225, 255],
+		64: [15, 25, 35, 45, 60, 75, 90, 105, 120, 150, 165, 195, 210, 240],
+		65: [13, 20, 30, 40, 55, 75, 90, 105, 120, 135, 165, 180, 195, 225],
+	},
+	fish_lean: {
+		55: [150, 165, 165, 180, 195, 225, 240, 270, 285, 315, 345, 375, 420, 450],
+		56: [105, 120, 120, 135, 150, 180, 195, 225, 240, 270, 300, 330, 360, 405],
+		57: [75, 90, 90, 105, 120, 150, 165, 180, 210, 240, 270, 300, 330, 360],
+		58: [50, 60, 75, 90, 105, 120, 150, 165, 195, 210, 240, 270, 300, 330],
+		59: [35, 45, 55, 75, 90, 105, 135, 150, 165, 195, 225, 240, 270, 300],
+		60: [30, 35, 50, 60, 75, 105, 120, 135, 150, 180, 210, 225, 255, 285],
+	},
+	fish_fatty: {
+		55: [255, 255, 270, 285, 300, 315, 330, 360, 390, 420, 450, 480, 510, 555],
+		56: [180, 180, 195, 210, 225, 240, 255, 285, 315, 345, 375, 405, 435, 480],
+		57: [120, 120, 135, 150, 165, 195, 210, 240, 255, 285, 315, 345, 375, 420],
+		58: [90, 90, 105, 120, 135, 150, 180, 195, 225, 255, 285, 315, 345, 375],
+		59: [60, 75, 75, 90, 105, 135, 150, 180, 195, 225, 255, 285, 315, 345],
+		60: [40, 50, 60, 75, 90, 120, 135, 150, 180, 195, 225, 255, 285, 315],
+	},
+};
+
+// Table 1.1, slab-like column (the slowest shape): minutes to cool from 55-80 °C to 5 °C in a bath
+// that is at least half ice, for 5-70 mm
+const ICE_BATH_MINUTES: readonly number[] = [
+	5, 14, 25, 35, 50, 75, 90, 105, 135, 165, 195, 225, 255, 285,
+];
+
+// FSAI: chill to 5 °C within 120 minutes (after at most 30 minutes out of the bath)
+export const FSAI_CHILL_LIMIT_MIN = 120;
+
+export interface SousVideEstimate {
+	cookMinutes: number | null;
+	coolMinutes: number;
+	coolWithinFsai: boolean;
+}
+
+// Uses the column at or below the core target (the bath, target + offset, is hotter, so the time
+// is on the safe side) and the thickness rounded up to the next table step. Outside the table the
+// cook time is unknown: only the MEATER can say when such a cook is done.
+export function estimateSousVide(
+	protein: SousVideProtein,
+	coreTempC: number,
+	thicknessMm: number,
+): SousVideEstimate {
+	const index = roundThicknessUp(thicknessMm) / 5 - 1;
+	const columns = Object.keys(BATH_MINUTES[protein])
+		.map(Number)
+		.filter((t) => t <= coreTempC);
+	const column = columns.length ? Math.max(...columns) : undefined;
+	const cookMinutes =
+		column === undefined ? null : (BATH_MINUTES[protein][column]?.[index] ?? null);
+	const coolMinutes =
+		ICE_BATH_MINUTES[index] ?? ICE_BATH_MINUTES[ICE_BATH_MINUTES.length - 1] ?? 285;
+	return { cookMinutes, coolMinutes, coolWithinFsai: coolMinutes <= FSAI_CHILL_LIMIT_MIN };
+}

@@ -9,6 +9,7 @@ import {
 } from "../home-assistant/sous-vide.ts";
 import { findRecipe } from "../recipe-book.ts";
 import {
+	estimateSousVide,
 	findPreset,
 	ManualBathSchema,
 	resolveSousVide,
@@ -32,10 +33,16 @@ export function registerSousVideTools(server: McpServer): void {
 		"list_sous_vide_presets",
 		{
 			description:
-				"List the sous vide presets (e.g. 'Chicken breast', 'Beef steak (medium-rare)') with their default protein type, core temperature, thickness, bath offset, finishing step and source. Use a preset's values when writing a sous vide recipe, adjusting the thickness to the actual cut.",
+				"List the sous vide presets (with cookMinutes: Baldwin's table time in the bath from fridge-cold, null outside the table; coolMinutes: ice-bath time to 5 °C, and whether that meets the FSAI 2-hour chilling limit), e.g. 'Chicken breast', 'Beef steak (medium-rare)', with their default protein type, core temperature, thickness, bath offset, finishing step and source. Use a preset's values when writing a sous vide recipe, adjusting the thickness to the actual cut.",
 			annotations: { readOnlyHint: true, openWorldHint: false },
 		},
-		async () => text({ presets: SOUS_VIDE_PRESETS }),
+		async () =>
+			text({
+				presets: SOUS_VIDE_PRESETS.map((p) => ({
+					...p,
+					...estimateSousVide(p.protein, p.coreTempC, p.thicknessMm),
+				})),
+			}),
 	);
 
 	server.registerTool(
@@ -72,6 +79,7 @@ export function registerSousVideTools(server: McpServer): void {
 				recipe: recipe?.name ?? null,
 				...settings,
 				bathC: settings.coreTempC + settings.bathOffsetC,
+				...estimateSousVide(settings.protein, settings.coreTempC, settings.thicknessMm),
 				meater: meater ?? true,
 				next:
 					meater === false
