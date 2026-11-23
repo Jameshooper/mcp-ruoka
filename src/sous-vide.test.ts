@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
 	cookStatus,
+	markBagsIn,
 	startCook,
 	startManual,
 	stopCook,
@@ -286,5 +287,43 @@ test("status shows holding while the script is still waiting, and caps the kill 
 	expect(await cookStatus({ token: "t", fetchFn })).toMatchObject({
 		stage: "holding",
 		pasteurisedPercent: 100,
+	});
+});
+
+test("marking the bags in runs Home Assistant's bags-in script with where it came from", async () => {
+	const calls: Array<{ url: string; body: unknown }> = [];
+	const fetchFn = Object.assign(
+		async (url: string | URL | Request, init?: RequestInit) => {
+			calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+			return new Response("[]");
+		},
+		{ preconnect: () => {} },
+	);
+	expect(await markBagsIn("Bags in button", { token: "t", fetchFn })).toEqual({ ok: true });
+	expect(calls[0]).toEqual({
+		url: "http://supervisor/core/api/services/script/turn_on",
+		body: { entity_id: "script.sous_vide_bags_in", variables: { source: "Bags in button" } },
+	});
+});
+
+test("status reports when the bags went in, for the elapsed time", async () => {
+	const fetchFn = Object.assign(
+		async (url: string | URL | Request) => {
+			const id = String(url).split("/").pop() ?? "";
+			if (id === "input_datetime.sous_vide_bags_in") {
+				return new Response(
+					JSON.stringify({ state: "2026-11-22 17:41:26", attributes: { timestamp: 1795362086 } }),
+				);
+			}
+			if (id === "input_boolean.sous_vide_bags_confirmed") {
+				return new Response(JSON.stringify({ state: "on" }));
+			}
+			return new Response("", { status: 404 });
+		},
+		{ preconnect: () => {} },
+	);
+	expect(await cookStatus({ token: "t", fetchFn })).toMatchObject({
+		bagsInAt: new Date(1795362086 * 1000).toISOString(),
+		bagsConfirmed: true,
 	});
 });

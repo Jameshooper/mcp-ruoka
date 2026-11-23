@@ -8,6 +8,10 @@ import type { PublishOptions, PublishResult } from "./states.ts";
 // The app only starts and stops that script and reads the result back.
 export const COOK_SCRIPT = "script.sous_vide_cook";
 export const STOP_SCRIPT = "script.sous_vide_stop";
+// Marks when the bags went in, which starts the elapsed time. Home Assistant also calls it itself
+// when the MEATER's ambient reading jumps as the probe hits the water.
+export const BAGS_SCRIPT = "script.sous_vide_bags_in";
+const BAGS_IN = "input_datetime.sous_vide_bags_in";
 // Manual mode skips the cook script and the pasteurisation tracking: the cook just sets the water
 // and, optionally, how long it runs. Home Assistant switches the cooker off when the timer ends,
 // so the app does not need to stay open.
@@ -31,6 +35,7 @@ const STATUS_ENTITIES = {
 	plannedMinutes: "sensor.sous_vide_planned_bath_time",
 	plannedFinish: "input_datetime.sous_vide_planned_finish",
 	heating: COOK_SCRIPT,
+	bagsConfirmed: "input_boolean.sous_vide_bags_confirmed",
 } as const;
 
 const StateSchema = z.object({
@@ -135,6 +140,16 @@ export async function startCook(
 	return started ? { ok: true } : result;
 }
 
+export function markBagsIn(source: string, options: PublishOptions = {}): Promise<PublishResult> {
+	return callService(
+		"script",
+		"turn_on",
+		{ entity_id: BAGS_SCRIPT, variables: { source } },
+		options,
+		30_000,
+	);
+}
+
 export function stopCook(options: PublishOptions = {}): Promise<PublishResult> {
 	return callService("script", "turn_on", { entity_id: STOP_SCRIPT }, options);
 }
@@ -199,6 +214,14 @@ export interface CookStatus {
 	plannedFinish: string | null;
 	timerEndsAt: string | null;
 	tableTimerEndsAt: string | null;
+	bagsInAt: string | null;
+	bagsConfirmed: boolean;
+}
+
+// input_datetime keeps a Unix timestamp attribute in local time, which turns into an exact instant
+function timestampIso(entity: z.infer<typeof StateSchema> | null): string | null {
+	const ts = entity?.attributes?.timestamp;
+	return typeof ts === "number" && ts > 0 ? new Date(ts * 1000).toISOString() : null;
 }
 
 function endsAt(timer: z.infer<typeof StateSchema> | null): string | null {
@@ -211,10 +234,11 @@ export async function cookStatus(
 ): Promise<CookStatus | { error: string }> {
 	if (!token(options)) return { error: "Not running inside Home Assistant" };
 	const entries = Object.entries(STATUS_ENTITIES);
-	const [values, timer, tableTimer] = await Promise.all([
+	const [values, timer, tableTimer, bagsIn] = await Promise.all([
 		Promise.all(entries.map(([, entityId]) => readState(entityId, options))),
 		readEntity(MANUAL_TIMER, options),
 		readEntity(TABLE_TIMER, options),
+		readEntity(BAGS_IN, options),
 	]);
 	const s: Record<string, string | null> = {};
 	entries.forEach(([key], i) => {
@@ -247,5 +271,7 @@ export async function cookStatus(
 		plannedFinish: s.plannedFinish ?? null,
 		timerEndsAt: endsAt(timer),
 		tableTimerEndsAt: endsAt(tableTimer),
+		bagsInAt: timestampIso(bagsIn),
+		bagsConfirmed: s.bagsConfirmed === "on",
 	};
 }

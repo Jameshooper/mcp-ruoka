@@ -809,3 +809,20 @@ test("sous vide estimate route returns table times and rejects bad input", async
 	);
 	expect(bad.status).toBe(400);
 });
+
+test("bags-in route needs JSON and reports when Home Assistant cannot be reached", async () => {
+	const { handleUiRequest } = await import("./ui-server.ts");
+	const post = (contentType: string) =>
+		handleUiRequest(
+			new Request("http://x/api/sous-vide/bags-in", {
+				method: "POST",
+				headers: { "Content-Type": contentType },
+				body: "{}",
+			}),
+		);
+	expect((await post("text/plain")).status).toBe(415);
+	const saved = process.env.SUPERVISOR_TOKEN;
+	delete process.env.SUPERVISOR_TOKEN;
+	expect((await post("application/json")).status).toBe(502);
+	if (saved !== undefined) process.env.SUPERVISOR_TOKEN = saved;
+});
