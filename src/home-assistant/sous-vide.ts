@@ -8,6 +8,10 @@ import type { PublishOptions, PublishResult } from "./states.ts";
 // The app only starts and stops that script and reads the result back.
 export const COOK_SCRIPT = "script.sous_vide_cook";
 export const STOP_SCRIPT = "script.sous_vide_stop";
+// Marks when the bags went in, which starts the elapsed time. Home Assistant also calls it itself
+// when the MEATER's ambient reading jumps as the probe hits the water.
+export const BAGS_SCRIPT = "script.sous_vide_bags_in";
+const BAGS_IN = "input_datetime.sous_vide_bags_in";
 // Manual mode skips the cook script and the pasteurisation tracking: the cook just sets the water
 // and, optionally, how long it runs. Home Assistant switches the cooker off when the timer ends,
 // so the app does not need to stay open.
@@ -31,6 +35,7 @@ const STATUS_ENTITIES = {
 	plannedMinutes: "sensor.sous_vide_planned_bath_time",
 	plannedFinish: "input_datetime.sous_vide_planned_finish",
 	heating: COOK_SCRIPT,
+	bagsConfirmed: "input_boolean.sous_vide_bags_confirmed",
 } as const;
 
 const StateSchema = z.object({
@@ -42,11 +47,14 @@ function token(options: PublishOptions): string {
 	return options.token ?? process.env.SUPERVISOR_TOKEN ?? "";
 }
 
+const TIMED_OUT = "Home Assistant did not answer in time";
+
 async function callService(
 	domain: string,
 	service: string,
 	data: Record<string, unknown>,
 	options: PublishOptions,
+	timeoutMs = 10_000,
 ): Promise<PublishResult> {
 	const auth = token(options);
 	if (!auth) return { ok: false, error: "Not running inside Home Assistant" };
@@ -57,7 +65,7 @@ async function callService(
 				method: "POST",
 				headers: { Authorization: `Bearer ${auth}`, "Content-Type": "application/json" },
 				body: JSON.stringify(data),
-				signal: AbortSignal.timeout(10_000),
+				signal: AbortSignal.timeout(timeoutMs),
 			},
 		);
 		if (!response.ok) {
@@ -67,7 +75,9 @@ async function callService(
 		return { ok: true };
 	} catch (err) {
 		logger.warn({ domain, service, err }, "Could not call Home Assistant");
-		return { ok: false, error: "Could not reach Home Assistant" };
+		return err instanceof Error && err.name === "TimeoutError"
+			? { ok: false, error: TIMED_OUT }
+			: { ok: false, error: "Could not reach Home Assistant" };
 	}
 }
 
@@ -98,12 +108,16 @@ async function readState(entityId: string, options: PublishOptions): Promise<str
 
 // script.turn_on returns at once; calling the script itself would hold the request open for the
 // whole time the water heats
-export function startCook(
+// Home Assistant can take well over ten seconds to answer script.turn_on (seen on a real cook),
+// while the script has in fact started. So the call waits longer, and if it still times out the
+// script's last_triggered decides whether the cook began.
+export async function startCook(
 	settings: SousVideSettings,
 	meater = true,
 	options: PublishOptions = {},
 ): Promise<PublishResult> {
-	return callService(
+	const asked = Date.now();
+	const result = await callService(
 		"script",
 		"turn_on",
 		{
@@ -117,6 +131,22 @@ export function startCook(
 			},
 		},
 		options,
+		30_000,
+	);
+	if (result.ok || result.error !== TIMED_OUT) return result;
+	const script = await readEntity(COOK_SCRIPT, options);
+	const triggered = script?.attributes?.last_triggered;
+	const started = typeof triggered === "string" && Date.parse(triggered) >= asked - 5_000;
+	return started ? { ok: true } : result;
+}
+
+export function markBagsIn(source: string, options: PublishOptions = {}): Promise<PublishResult> {
+	return callService(
+		"script",
+		"turn_on",
+		{ entity_id: BAGS_SCRIPT, variables: { source } },
+		options,
+		30_000,
 	);
 }
 
@@ -159,6 +189,10 @@ export async function stopManual(options: PublishOptions = {}): Promise<PublishR
 	return callService("switch", "turn_off", { entity_id: COOKER_SWITCH }, options);
 }
 
+function capPercent(value: number | null): number | null {
+	return value === null ? null : Math.min(100, value);
+}
+
 function num(value: string | null): number | null {
 	if (value === null) return null;
 	const n = Number(value);
@@ -180,6 +214,14 @@ export interface CookStatus {
 	plannedFinish: string | null;
 	timerEndsAt: string | null;
 	tableTimerEndsAt: string | null;
+	bagsInAt: string | null;
+	bagsConfirmed: boolean;
+}
+
+// input_datetime keeps a Unix timestamp attribute in local time, which turns into an exact instant
+function timestampIso(entity: z.infer<typeof StateSchema> | null): string | null {
+	const ts = entity?.attributes?.timestamp;
+	return typeof ts === "number" && ts > 0 ? new Date(ts * 1000).toISOString() : null;
 }
 
 function endsAt(timer: z.infer<typeof StateSchema> | null): string | null {
@@ -192,22 +234,27 @@ export async function cookStatus(
 ): Promise<CookStatus | { error: string }> {
 	if (!token(options)) return { error: "Not running inside Home Assistant" };
 	const entries = Object.entries(STATUS_ENTITIES);
-	const [values, timer, tableTimer] = await Promise.all([
+	const [values, timer, tableTimer, bagsIn] = await Promise.all([
 		Promise.all(entries.map(([, entityId]) => readState(entityId, options))),
 		readEntity(MANUAL_TIMER, options),
 		readEntity(TABLE_TIMER, options),
+		readEntity(BAGS_IN, options),
 	]);
 	const s: Record<string, string | null> = {};
 	entries.forEach(([key], i) => {
 		s[key] = values[i] ?? null;
 	});
 	const state = s.state ?? null;
+	// Once the probe shows the core at target the pasteurisation state is the news, even if the cook
+	// script is still running (it waits for the water and can outlast the bags going in)
 	const stage =
-		s.heating === "on"
-			? "heating water"
-			: state === "idle" || state === "heating" || state === "holding" || state === "complete"
-				? state
-				: "unknown";
+		state === "holding" || state === "complete"
+			? state
+			: s.heating === "on"
+				? "heating water"
+				: state === "idle" || state === "heating"
+					? state
+					: "unknown";
 	return {
 		stage,
 		protein: s.protein ?? null,
@@ -217,11 +264,14 @@ export async function cookStatus(
 		waterC: num(s.water ?? null),
 		cookerOn: s.cookerOn === "on" ? true : s.cookerOn === "off" ? false : null,
 		coreC: num(s.core ?? null),
-		pasteurisedPercent: num(s.killProgress ?? null),
+		// The kill keeps adding up after 100 %, which reads as nonsense; 100 means done
+		pasteurisedPercent: capPercent(num(s.killProgress ?? null)),
 		fsaiHoldRemainingMin: num(s.fsaiRemaining ?? null),
 		plannedBathMinutes: num(s.plannedMinutes ?? null),
 		plannedFinish: s.plannedFinish ?? null,
 		timerEndsAt: endsAt(timer),
 		tableTimerEndsAt: endsAt(tableTimer),
+		bagsInAt: timestampIso(bagsIn),
+		bagsConfirmed: s.bagsConfirmed === "on",
 	};
 }

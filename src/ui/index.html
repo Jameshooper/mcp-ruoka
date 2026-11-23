@@ -896,7 +896,25 @@ function sousVideControls(startBody, onStatus) {
     const value = el("b", {}, "–");
     return { value, node: el("div", { class: "macro" }, value, el("small", {}, label)) };
   };
-  const water = cell("water"), core = cell("core"), done = cell("pasteurised"), finish = cell("planned finish");
+  const water = cell("water"), core = cell("core"), done = cell("pasteurised"), elapsed = cell("elapsed"), finish = cell("planned finish");
+  // Counts up from when the bags went in (the Bags in button, Claude, or the MEATER hitting the
+  // water). Ticks every second on its own; the time itself comes from Home Assistant.
+  let bagsAt = null;
+  const renderElapsed = () => {
+    if (bagsAt === null) {
+      elapsed.value.textContent = "–";
+      return;
+    }
+    const secs = Math.max(0, Math.floor((Date.now() - bagsAt) / 1000));
+    const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), sec = secs % 60;
+    const two = (n) => String(n).padStart(2, "0");
+    elapsed.value.textContent = h ? `${h}:${two(m)}:${two(sec)}` : `${m}:${two(sec)}`;
+  };
+  const tick = () => {
+    if (!elapsed.node.isConnected) return;
+    renderElapsed();
+    setTimeout(tick, 1000);
+  };
   const stage = el("div", { class: "meta" }, "");
   const note = el("span", { class: "meta" });
   const show = (s) => {
@@ -907,6 +925,10 @@ function sousVideControls(startBody, onStatus) {
     const at = s.tableTimerEndsAt ? new Date(s.tableTimerEndsAt) : s.plannedFinish && s.stage !== "idle" ? new Date(s.plannedFinish.replace(" ", "T")) : null;
     finish.value.textContent = at && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "–";
     stage.textContent = s.tableTimerEndsAt ? "Timed from Baldwin's table (no MEATER)" : SOUS_VIDE_STAGE[s.stage] || s.stage;
+    const cooking = s.cookerOn === true || (s.stage !== "idle" && s.stage !== "unknown");
+    const bagsTime = s.bagsInAt ? new Date(s.bagsInAt).getTime() : NaN;
+    bagsAt = cooking && !Number.isNaN(bagsTime) ? bagsTime : null;
+    renderElapsed();
     if (onStatus) onStatus(s);
   };
   const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -921,7 +943,7 @@ function sousVideControls(startBody, onStatus) {
   meaterBox.addEventListener("change", explainMeater);
   explainMeater();
   const node = el("div", {},
-    el("div", { class: "macros", style: "grid-template-columns: repeat(4, 1fr)" }, water.node, core.node, done.node, finish.node),
+    el("div", { class: "macros", style: "grid-template-columns: repeat(3, 1fr)" }, water.node, core.node, done.node, elapsed.node, finish.node),
     stage,
     el("label", { class: "row" }, meaterBox, el("span", { class: "meta" }, "Using the MEATER")),
     meaterHelp,
@@ -945,6 +967,16 @@ function sousVideControls(startBody, onStatus) {
           note.textContent = `Could not stop: ${error.message}`;
         }
       } }, "⏹ Stop"),
+      el("button", { type: "button", class: "btn", onclick: async () => {
+        try {
+          await post("api/sous-vide/bags-in", {});
+          bagsAt = Date.now();
+          renderElapsed();
+          note.textContent = "Bags in: elapsed time started";
+        } catch (error) {
+          note.textContent = `Could not mark the bags in: ${error.message}`;
+        }
+      } }, "🛍️ Bags in"),
       note,
     ),
   );
@@ -958,6 +990,7 @@ function sousVideControls(startBody, onStatus) {
     setTimeout(refresh, 15000);
   };
   setTimeout(refresh, 0);
+  setTimeout(tick, 0);
   return node;
 }
 

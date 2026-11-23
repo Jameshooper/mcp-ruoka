@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import {
 	cookStatus,
+	markBagsIn,
 	startCook,
 	startManual,
 	stopCook,
@@ -92,7 +93,7 @@ export function registerSousVideTools(server: McpServer): void {
 	server.registerTool(
 		"sous_vide_status",
 		{
-			description: `How the current sous vide cook is going: stage (heating water, heating, holding, complete), water and core temperatures, percent pasteurised, the FSAI hold remaining and the planned finish. ${SAFETY} Only say it is safe when stage is 'complete'.`,
+			description: `How the current sous vide cook is going: stage (heating water, heating, holding, complete), when the bags went in (bagsInAt, for the elapsed time), water and core temperatures, percent pasteurised, the FSAI hold remaining and the planned finish. ${SAFETY} Only say it is safe when stage is 'complete'.`,
 			annotations: { readOnlyHint: true, openWorldHint: true },
 		},
 		async () => {
@@ -118,6 +119,21 @@ export function registerSousVideTools(server: McpServer): void {
 				switchesOffAt: minutes ? new Date(Date.now() + minutes * 60_000).toISOString() : null,
 				pasteurisationTracked: false,
 			});
+		},
+	);
+
+	server.registerTool(
+		"sous_vide_bags_in",
+		{
+			description:
+				"Mark that the bags have just gone into the water: starts the elapsed time shown in the Recipes panel, moves the planned finish to Baldwin's table time from now, and for a cook without the MEATER restarts the table timer at the exact table time. Call it when the cook says the bags are in. With the MEATER, Home Assistant usually notices on its own when the probe hits the water.",
+			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+		},
+		async () => {
+			const marked = await markBagsIn("told Claude");
+			return marked.ok
+				? text({ bagsIn: new Date().toISOString() })
+				: failure(`Could not mark the bags in: ${marked.error}`);
 		},
 	);
 

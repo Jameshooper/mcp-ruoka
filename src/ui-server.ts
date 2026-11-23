@@ -11,6 +11,7 @@ import {
 import { addInstagramDraft, deleteDraft, listDrafts } from "./draft-book.ts";
 import {
 	cookStatus,
+	markBagsIn,
 	startCook,
 	startManual,
 	stopCook,
@@ -379,6 +380,14 @@ async function routeUiRequest(req: Request): Promise<Response> {
 	if (path === "/api/sous-vide/status" && req.method === "GET") {
 		const status = await cookStatus();
 		return "error" in status ? json(status, 503) : json(status);
+	}
+
+	if (path === "/api/sous-vide/bags-in" && req.method === "POST") {
+		if (!req.headers.get("content-type")?.includes("application/json")) {
+			return json({ error: "Expected JSON" }, 415);
+		}
+		const marked = await markBagsIn("Bags in button");
+		return marked.ok ? json({ ok: true }) : json({ error: marked.error }, 502);
 	}
 
 	if (path === "/api/sous-vide/manual" && req.method === "POST") {
