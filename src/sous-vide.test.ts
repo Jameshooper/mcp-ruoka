@@ -231,3 +231,60 @@ test("estimates match Baldwin's tables and stay on the safe side", () => {
 		coolWithinFsai: false,
 	});
 });
+
+function slowHomeAssistant(lastTriggered: string) {
+	return Object.assign(
+		async (_url: string | URL | Request, init?: RequestInit) => {
+			if (init?.method === "POST")
+				throw new DOMException("The operation timed out.", "TimeoutError");
+			return new Response(
+				JSON.stringify({ state: "on", attributes: { last_triggered: lastTriggered } }),
+			);
+		},
+		{ preconnect: () => {} },
+	);
+}
+
+const chicken = {
+	protein: "poultry" as const,
+	coreTempC: 63,
+	thicknessMm: 30,
+	bathOffsetC: 1,
+	preset: null,
+	finish: null,
+};
+
+test("a slow answer still counts when the cook script did start", async () => {
+	const fetchFn = slowHomeAssistant(new Date().toISOString());
+	expect(await startCook(chicken, true, { token: "t", fetchFn })).toEqual({ ok: true });
+});
+
+test("a slow answer is an error when the script did not start", async () => {
+	const fetchFn = slowHomeAssistant("2026-11-19T10:00:00+00:00");
+	expect(await startCook(chicken, true, { token: "t", fetchFn })).toEqual({
+		ok: false,
+		error: "Home Assistant did not answer in time",
+	});
+});
+
+test("status shows holding while the script is still waiting, and caps the kill at 100 %", async () => {
+	const states: Record<string, string> = {
+		"input_select.pasteurisation_state": "holding",
+		"script.sous_vide_cook": "on",
+		"sensor.pasteurisation_kill_progress": "718.7",
+	};
+	const fetchFn = Object.assign(
+		async (url: string | URL | Request) => {
+			const id = String(url).split("/").pop() ?? "";
+			const state = states[id];
+			return state === undefined
+				? new Response("", { status: 404 })
+				: new Response(JSON.stringify({ entity_id: id, state }));
+		},
+		{ preconnect: () => {} },
+	);
+	expect(await cookStatus({ token: "t", fetchFn })).toMatchObject({
+		stage: "holding",
+		pasteurisedPercent: 100,
+	});
+});
