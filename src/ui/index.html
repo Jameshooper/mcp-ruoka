@@ -1727,6 +1727,7 @@ function showPlan(id) {
         el("div", { class: "row" }, stars, ratingStatus),
       ),
       claudeActions([{ label: "🛒 Shop with Claude", text: () => planShopPrompt(plan), primary: true }]),
+      whatsappButton(() => planMenuText(plan)),
       el("div", { class: "tiles" },
         tile(euro(plan.toBuy.total), notPricedCount(plan) > 0 ? `To buy + ${notPricedCount(plan)} not priced` : "To buy", "🛒", "tone-blue"),
         tile(euro(plan.pantry.total), "Pantry check", "🧂", "tone-orange"),
@@ -1753,6 +1754,30 @@ function showPlan(id) {
   );
   updateProgress();
   window.scrollTo(0, 0);
+}
+
+// The week's menu as a WhatsApp message (*bold* is WhatsApp's own markup). WhatsApp has no
+// official way for an app to post into a personal group, so the button opens WhatsApp with the
+// text filled in and the cook picks the family group and sends.
+function planMenuText(plan) {
+  const dayOf = (meal) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(meal.date || "");
+    if (!m) return meal.name;
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }).replace(",", "");
+  };
+  const lines = plan.meals.map((meal) => {
+    const icon = meal.protein ? `${PROTEIN_ICON[meal.protein]} ` : "";
+    return `*${dayOf(meal)}*: ${icon}${meal.dish || meal.name}`;
+  });
+  return [`🍽️ *${plan.name}*`, "", ...lines].join("\n");
+}
+
+function whatsappButton(text) {
+  const link = el("a", { class: "btn", href: `https://wa.me/?text=${encodeURIComponent(text())}`, target: "_blank", rel: "noopener" }, "💬 Share menu to WhatsApp");
+  // Built when tapped, so a renamed plan or edited meal is what gets sent
+  link.addEventListener("click", () => link.setAttribute("href", `https://wa.me/?text=${encodeURIComponent(text())}`));
+  return el("div", { class: "row" }, link);
 }
 
 async function saveMeal(plan, index, meal) {
