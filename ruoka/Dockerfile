@@ -4,8 +4,13 @@ FROM oven/bun:1.4.4-debian
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git curl jq ca-certificates gnupg \
  && rm -rf /var/lib/apt/lists/*
+# Docker caches a step by its command text, so without this the Tailscale layer would keep the
+# version from the first build forever: bumping "version" in config.yaml (BUILD_VERSION) forces a
+# fresh install of the latest Tailscale, which is how security fixes get picked up.
+ARG BUILD_VERSION=dev
 # Tailscale's signed apt repository, rather than piping a remote install script into a shell
-RUN . /etc/os-release \
+RUN echo "Installing latest Tailscale for ${BUILD_VERSION}" \
+ && . /etc/os-release \
  && curl -fsSL "https://pkgs.tailscale.com/stable/debian/${VERSION_CODENAME}.noarmor.gpg" \
       -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
  && curl -fsSL "https://pkgs.tailscale.com/stable/debian/${VERSION_CODENAME}.tailscale-keyring.list" \
